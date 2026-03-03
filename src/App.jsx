@@ -278,8 +278,17 @@ export default function App() {
   const updE    = (f, val) => setLocalDefs(p => p.map(d => d.id === editId ? { ...d, [f]: val } : d));
 
   const save = () => {
+    const newVehicles = buildVehicles(localDefs);
     setDefs(localDefs);
-    setVs(p => p.map(s => ({ ...s, ri: 0, prog: 0, wait: 0 })));
+    setVs(p => p.map((s, i) => {
+      const v = newVehicles.find(x => x.id === s.id);
+      // Reset each vehicle to the start of its (new) route and stagger starts
+      // so they don't all overlap at the same position simultaneously
+      const startPos = v && v.route.length >= 2
+        ? lanePos(v.route[0], v.route[1], 0, stopPos)
+        : s.pos;
+      return { ...s, ri: 0, prog: 0, wait: i * 0.8, pos: startPos, park: null };
+    }));
     setTab("map");
   };
 
