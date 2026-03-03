@@ -34,8 +34,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          VITE_ACCESS_PASSWORD_HASH: ${{ secrets.ACCESS_PASSWORD_HASH }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
