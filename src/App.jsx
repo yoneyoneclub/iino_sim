@@ -1,15 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── Road topology ────────────────────────────────────────────────────────────
-//
-//   A ◄══════► B ◄══════► C
-//              ◄══════►   ║
-//                          ║
-//              D ◄════════╝
-//
-// Each segment has two dedicated one-way lanes:
-//   A ⇄ B,  B ⇄ C,  B ⇄ D,  C ⇄ D
-//
 const STOPS = {
   A: { id:"A", name:"Info",   type:"station" },
   B: { id:"B", name:"改札",   type:"gate"    },
@@ -28,13 +19,11 @@ const DIRECTED_EDGES = [
   { from:"D", to:"C" },
 ];
 
-// Build adjacency for BFS (one-way)
 const ADJ = {};
 DIRECTED_EDGES.forEach(({ from: f, to: t }) => {
   ADJ[f] = [...(ADJ[f] || []), t];
 });
 
-// BFS over one-way graph
 function shortestPath(from, to) {
   if (from === to) return [from];
   const queue = [[from]], visited = new Set([from]);
@@ -49,7 +38,7 @@ function shortestPath(from, to) {
       queue.push(next);
     }
   }
-  return null; // no valid one-way path
+  return null;
 }
 
 function expandRoute(waypoints) {
@@ -63,50 +52,46 @@ function expandRoute(waypoints) {
 }
 
 // ─── Lane geometry ────────────────────────────────────────────────────────────
-//
-// Physical stop positions
-const SX = { A:80,  B:340, C:600, D:470 };
-const SY = { A:160, B:160, C:160, D:310 };
+const LANE = 14;
 
-// Each directed edge occupies a dedicated lane offset from the road centre.
-// We always offset to the LEFT of travel direction (drive on the left).
-const LANE = 14; // px offset
+// Initial stop positions (mutable via drag)
+const INIT_STOP_POS = {
+  A: { x:80,  y:160 },
+  B: { x:340, y:160 },
+  C: { x:600, y:160 },
+  D: { x:470, y:310 },
+};
 
-// For a directed edge from→to, compute the lane centre offset vector.
-// Left-of-travel = rotate travel direction 90° counter-clockwise.
-function laneVec(fromId, toId) {
-  const dx = SX[toId] - SX[fromId], dy = SY[toId] - SY[fromId];
-  const len = Math.hypot(dx, dy);
-  // Left-of-travel perpendicular (CCW rotation of unit travel vector)
+function laneVec(fromId, toId, sp) {
+  const dx = sp[toId].x - sp[fromId].x, dy = sp[toId].y - sp[fromId].y;
+  const len = Math.hypot(dx, dy) || 1;
   return { ox: (dy / len) * LANE, oy: -(dx / len) * LANE };
 }
 
-function lanePos(fromId, toId, t) {
-  const { ox, oy } = laneVec(fromId, toId);
+function lanePos(fromId, toId, t, sp) {
+  const { ox, oy } = laneVec(fromId, toId, sp);
   return {
-    x: SX[fromId] + (SX[toId] - SX[fromId]) * t + ox,
-    y: SY[fromId] + (SY[toId] - SY[fromId]) * t + oy,
+    x: sp[fromId].x + (sp[toId].x - sp[fromId].x) * t + ox,
+    y: sp[fromId].y + (sp[toId].y - sp[fromId].y) * t + oy,
   };
 }
 
-function segDist(aId, bId) {
-  return Math.hypot(SX[bId] - SX[aId], SY[bId] - SY[aId]);
+function segDist(aId, bId, sp) {
+  return Math.hypot(sp[bId].x - sp[aId].x, sp[bId].y - sp[aId].y);
 }
 
 // ─── Vehicles ─────────────────────────────────────────────────────────────────
-// All waypoints must follow one-way direction.
-// A→B→C→D→B→A is the main loop. Shorthands that BFS can route through.
 const VEHICLE_DEFS = [
-  { id:1,  name:"iino-01", mode:"loop",     waypoints:["A","B","A"],     color:"#22c55e", speed:0.8, active:true  },
-  { id:2,  name:"iino-02", mode:"loop",     waypoints:["A","B","A"],     color:"#4ade80", speed:0.6, active:true  },
-  { id:3,  name:"iino-03", mode:"loop",     waypoints:["A","B","A"],     color:"#10b981", speed:0.7, active:true  },
-  { id:4,  name:"iino-04", mode:"loop",     waypoints:["A","B","A"],     color:"#34d399", speed:0.9, active:true  },
-  { id:5,  name:"iino-05", mode:"loop",     waypoints:["A","B","A"],     color:"#6ee7b7", speed:0.8, active:true  },
-  { id:6,  name:"iino-06", mode:"loop",     waypoints:["A","D","A"],     color:"#f59e0b", speed:0.8, active:true  },
-  { id:7,  name:"iino-07", mode:"loop",     waypoints:["A","C","A"],     color:"#8b5cf6", speed:0.8, active:true  },
-  { id:8,  name:"iino-08", mode:"loop",     waypoints:["A","B","A"],     color:"#06b6d4", speed:0.7, active:true  },
-  { id:9,  name:"iino-09", mode:"loop",     waypoints:["A","B","A"],     color:"#f472b6", speed:0.6, active:true  },
-  { id:10, name:"iino-10", mode:"loop",     waypoints:["A","B","A"],     color:"#fb923c", speed:0.9, active:true  },
+  { id:1,  name:"iino-01", mode:"loop", waypoints:["A","B","A"], color:"#22c55e", speed:0.8, active:true },
+  { id:2,  name:"iino-02", mode:"loop", waypoints:["A","B","A"], color:"#4ade80", speed:0.6, active:true },
+  { id:3,  name:"iino-03", mode:"loop", waypoints:["A","B","A"], color:"#10b981", speed:0.7, active:true },
+  { id:4,  name:"iino-04", mode:"loop", waypoints:["A","B","A"], color:"#34d399", speed:0.9, active:true },
+  { id:5,  name:"iino-05", mode:"loop", waypoints:["A","B","A"], color:"#6ee7b7", speed:0.8, active:true },
+  { id:6,  name:"iino-06", mode:"loop", waypoints:["A","D","A"], color:"#f59e0b", speed:0.8, active:true },
+  { id:7,  name:"iino-07", mode:"loop", waypoints:["A","C","A"], color:"#8b5cf6", speed:0.8, active:true },
+  { id:8,  name:"iino-08", mode:"loop", waypoints:["A","B","A"], color:"#06b6d4", speed:0.7, active:true },
+  { id:9,  name:"iino-09", mode:"loop", waypoints:["A","B","A"], color:"#f472b6", speed:0.6, active:true },
+  { id:10, name:"iino-10", mode:"loop", waypoints:["A","B","A"], color:"#fb923c", speed:0.9, active:true },
 ];
 
 function buildVehicles(defs) {
@@ -118,14 +103,12 @@ const ML = { loop:"ループ",  detour:"寄り道",  ondemand:"オンデマン�
 const SC = { station:"#3b82f6", gate:"#ef4444", terminal:"#f97316", stop:"#64748b" };
 
 // ─── Road rendering helpers ────────────────────────────────────────────────────
-// Draw a single directed lane with an arrow indicator
-function DirectedLane({ fromId, toId, color = "#1e3a2f" }) {
-  const fx = SX[fromId], fy = SY[fromId], tx = SX[toId], ty = SY[toId];
-  const { ox, oy } = laneVec(fromId, toId);
+function DirectedLane({ fromId, toId, color = "#1e3a2f", sp }) {
+  const fx = sp[fromId].x, fy = sp[fromId].y, tx = sp[toId].x, ty = sp[toId].y;
+  const { ox, oy } = laneVec(fromId, toId, sp);
   const x1 = fx + ox, y1 = fy + oy, x2 = tx + ox, y2 = ty + oy;
-  const dx = tx - fx, dy = ty - fy, len = Math.hypot(dx, dy);
+  const dx = tx - fx, dy = ty - fy, len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
-  // Arrow at midpoint
   const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
   const AW = 7, AL = 10;
   const ax = mx + ux * AL, ay = my + uy * AL;
@@ -141,23 +124,28 @@ function DirectedLane({ fromId, toId, color = "#1e3a2f" }) {
   );
 }
 
-// Road bed (background slab between two lanes)
-function RoadBed({ fromId, toId }) {
-  const fx = SX[fromId], fy = SY[fromId], tx = SX[toId], ty = SY[toId];
+function RoadBed({ fromId, toId, sp }) {
   return (
-    <line x1={fx} y1={fy} x2={tx} y2={ty}
+    <line x1={sp[fromId].x} y1={sp[fromId].y} x2={sp[toId].x} y2={sp[toId].y}
       stroke="#161f30" strokeWidth={LANE * 4.5} strokeLinecap="round" />
   );
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  // Single source of truth for vehicle definitions
   const [defs,      setDefs]      = useState(VEHICLE_DEFS);
-  const [vehicles,  setVehicles]  = useState(() => buildVehicles(VEHICLE_DEFS));
+  // vehicles is always derived from defs — no separate state that can desync
+  const vehicles = useMemo(() => buildVehicles(defs), [defs]);
+
+  // Stop positions — draggable via SVG
+  const [stopPos,   setStopPos]   = useState(INIT_STOP_POS);
+  const dragRef = useRef(null); // { id, ox, oy } while dragging
+
   const [vs,        setVs]        = useState(() =>
     buildVehicles(VEHICLE_DEFS).map((v, i) => ({
       id: v.id, ri: 0, prog: 0,
-      pos: { x: SX[v.route[0]], y: SY[v.route[0]] },
+      pos: { x: INIT_STOP_POS[v.route[0]].x, y: INIT_STOP_POS[v.route[0]].y },
       park: null,
       wait: i * 1.1,
     }))
@@ -169,9 +157,12 @@ export default function App() {
   const [editId,    setEditId]    = useState(1);
   const [localDefs, setLocalDefs] = useState(VEHICLE_DEFS);
 
-  const lt = useRef(null);
-  const vr = useRef(vehicles);
+  const lt  = useRef(null);
+  const vr  = useRef(vehicles);
   vr.current = vehicles;
+  // ref so animation loop always reads latest positions without re-subscribing
+  const posR = useRef(stopPos);
+  posR.current = stopPos;
 
   const addLog = useCallback(m => setLogs(p => [{ t: Date.now(), m }, ...p].slice(0, 50)), []);
 
@@ -181,9 +172,9 @@ export default function App() {
       if (!lt.current) lt.current = ts;
       const dt = Math.min((ts - lt.current) / 1000, 0.05) * spd;
       lt.current = ts;
+      const sp = posR.current;
 
       setVs(prev => {
-        // Build per-lane occupancy for no-overtaking
         const occ = {};
         prev.forEach(s => {
           const v = vr.current.find(x => x.id === s.id);
@@ -200,15 +191,14 @@ export default function App() {
           if (!v || !v.active || v.route.length < 2) return s;
 
           if (s.wait > 0) {
-            // Glide to rest: continue in the same lane direction just past the stop node.
-            // parkPos is set when wait starts (stored in s.park), so it never changes
-            // mid-wait and there's no direction reversal.
             const alpha = Math.min(1, dt * 5);
             const tx = s.park ? s.park.x : s.pos.x;
             const ty = s.park ? s.park.y : s.pos.y;
-            const nx = s.pos.x + (tx - s.pos.x) * alpha;
-            const ny = s.pos.y + (ty - s.pos.y) * alpha;
-            return { ...s, wait: Math.max(0, s.wait - dt), pos: { x: nx, y: ny } };
+            return {
+              ...s,
+              wait: Math.max(0, s.wait - dt),
+              pos: { x: s.pos.x + (tx - s.pos.x) * alpha, y: s.pos.y + (ty - s.pos.y) * alpha },
+            };
           }
 
           const nri = s.ri + 1;
@@ -219,33 +209,27 @@ export default function App() {
           }
 
           const fromId = v.route[s.ri], toId = v.route[nri];
-          const segLen = segDist(fromId, toId);
+          const segLen = segDist(fromId, toId, sp);
 
-          // No-overtaking
           const key   = `${fromId}-${toId}`;
           const ahead = (occ[key] || []).filter(o => o.id !== v.id && o.prog > s.prog);
           const gap   = ahead.length ? Math.min(...ahead.map(o => o.prog)) - s.prog : 1;
-          const adv   = Math.min((v.speed * 60 * dt) / segLen, Math.max(0, gap - 0.05));
+          const adv   = Math.min((v.speed * 60 * dt) / (segLen || 1), Math.max(0, gap - 0.05));
 
           const np = s.prog + adv;
           if (np >= 1) {
             addLog(`${v.name} → ${STOPS[toId].name}`);
-            // Compute park target: lane position slightly past the stop (t=1.15),
-            // clamped so it doesn't overshoot visually too far.
-            // This means the vehicle keeps moving in the same direction it arrived from.
-            const parkLane = lanePos(fromId, toId, 1.0);
-            // Offset a little further along the same travel direction
-            const dx = SX[toId] - SX[fromId], dy = SY[toId] - SY[fromId];
-            const len = Math.hypot(dx, dy);
-            const PARK_OVERSHOOT = 18; // px past the stop centre along lane
-            const { ox, oy } = laneVec(fromId, toId);
+            const parkLane = lanePos(fromId, toId, 1.0, sp);
+            const dx = sp[toId].x - sp[fromId].x, dy = sp[toId].y - sp[fromId].y;
+            const len = Math.hypot(dx, dy) || 1;
+            const PARK_OVERSHOOT = 18;
             const park = {
               x: parkLane.x + (dx / len) * PARK_OVERSHOOT,
               y: parkLane.y + (dy / len) * PARK_OVERSHOOT,
             };
-            return { ...s, ri: nri, prog: 0, pos: lanePos(fromId, toId, 1.0), park, wait: 0.4 };
+            return { ...s, ri: nri, prog: 0, pos: lanePos(fromId, toId, 1.0, sp), park, wait: 0.4 };
           }
-          return { ...s, prog: np, pos: lanePos(fromId, toId, np), park: null };
+          return { ...s, prog: np, pos: lanePos(fromId, toId, np, sp), park: null };
         });
       });
       raf = requestAnimationFrame(tick);
@@ -254,21 +238,56 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [spd, addLog]);
 
-  const selV     = sel ? vehicles.find(v => v.id === sel) : null;
-  const editDef  = localDefs.find(d => d.id === editId) || localDefs[0];
-  const updE     = (f, val) => setLocalDefs(p => p.map(d => d.id === editId ? { ...d, [f]: val } : d));
-  const save     = () => {
-    const newV = buildVehicles(localDefs);
-    setDefs(localDefs); setVehicles(newV);
+  // ── Stop node drag ────────────────────────────────────────────────────────
+  const handleStopMouseDown = useCallback((e, id) => {
+    e.stopPropagation();
+    const svg = e.currentTarget.closest("svg");
+    const rect = svg.getBoundingClientRect();
+    const scaleX = 720 / rect.width, scaleY = 430 / rect.height;
+    dragRef.current = {
+      id,
+      ox: (e.clientX - rect.left) * scaleX - posR.current[id].x,
+      oy: (e.clientY - rect.top)  * scaleY - posR.current[id].y,
+    };
+  }, []);
+
+  const handleSvgMouseMove = useCallback((e) => {
+    if (!dragRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const scaleX = 720 / rect.width, scaleY = 430 / rect.height;
+    const x = Math.max(20, Math.min(700, (e.clientX - rect.left) * scaleX - dragRef.current.ox));
+    const y = Math.max(20, Math.min(410, (e.clientY - rect.top)  * scaleY - dragRef.current.oy));
+    setStopPos(prev => ({ ...prev, [dragRef.current.id]: { x, y } }));
+  }, []);
+
+  const handleSvgMouseUp = useCallback(() => { dragRef.current = null; }, []);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+  // Switching to cfg always syncs localDefs with current defs
+  const handleTabChange = (t) => {
+    if (t === "cfg") {
+      setLocalDefs(defs);
+      // If a vehicle is selected, pre-select it in the editor
+      if (sel) setEditId(sel);
+    }
+    setTab(t);
+  };
+
+  const selV    = sel ? vehicles.find(v => v.id === sel) : null;
+  const editDef = localDefs.find(d => d.id === editId) || localDefs[0];
+  const updE    = (f, val) => setLocalDefs(p => p.map(d => d.id === editId ? { ...d, [f]: val } : d));
+
+  const save = () => {
+    setDefs(localDefs);
     setVs(p => p.map(s => ({ ...s, ri: 0, prog: 0, wait: 0 })));
     setTab("map");
   };
+
+  // Only update defs — vehicles is derived via useMemo, always in sync
   const toggleActive = id => {
     setDefs(p => p.map(d => d.id === id ? { ...d, active: !d.active } : d));
-    setVehicles(p => p.map(v => v.id === id ? { ...v, active: !v.active } : v));
   };
 
-  // Unique physical road beds (one per undirected pair)
   const beds = [
     { fromId:"A", toId:"B" },
     { fromId:"B", toId:"C" },
@@ -286,7 +305,7 @@ export default function App() {
         <span style={{ fontSize:13, fontWeight:700, color:"#38bdf8" }}>🚗 iino Simulator</span>
         <div style={{ display:"flex", gap:2, marginLeft:"auto" }}>
           {[["map","マップ"],["cfg","設定"],["log","ログ"]].map(([t,l]) => (
-            <button key={t} onClick={() => setTab(t)} style={{
+            <button key={t} onClick={() => handleTabChange(t)} style={{
               padding:"4px 10px", borderRadius:4, border:"none", cursor:"pointer", fontSize:11,
               background:tab===t?"#38bdf8":"#1f2937", color:tab===t?"#0a0f1e":"#94a3b8", fontWeight:600
             }}>{l}</button>
@@ -304,7 +323,10 @@ export default function App() {
         <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
           <div style={{ flex:1, position:"relative", minWidth:0 }}>
             <svg width="100%" height="100%" viewBox="0 0 720 430"
-                 preserveAspectRatio="xMidYMid meet" style={{ display:"block" }}>
+                 preserveAspectRatio="xMidYMid meet" style={{ display:"block" }}
+                 onMouseMove={handleSvgMouseMove}
+                 onMouseUp={handleSvgMouseUp}
+                 onMouseLeave={handleSvgMouseUp}>
               <rect width="720" height="430" fill="#0a0f1e"/>
               {/* Grid */}
               {Array.from({length:18}).map((_,i)=>
@@ -313,26 +335,32 @@ export default function App() {
                 <line key={`h${i}`} x1={0} y1={i*40} x2={720} y2={i*40} stroke="#0d1424" strokeWidth={1}/>)}
 
               {/* Road beds */}
-              {beds.map(b => <RoadBed key={`bed-${b.fromId}-${b.toId}`} {...b}/>)}
+              {beds.map(b => <RoadBed key={`bed-${b.fromId}-${b.toId}`} {...b} sp={stopPos}/>)}
 
               {/* One-way lanes */}
               {DIRECTED_EDGES.map(e => (
-                <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} color="#1e3a2f"/>
+                <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} color="#1e3a2f" sp={stopPos}/>
               ))}
 
-              {/* Stop nodes */}
+              {/* Stop nodes — draggable, rendered before vehicles so vehicles appear on top */}
               {Object.values(STOPS).map(s => (
-                <g key={s.id}>
-                  <circle cx={SX[s.id]} cy={SY[s.id]} r={s.type==="station"?20:15}
+                <g key={s.id} style={{ cursor:"grab" }}
+                   onMouseDown={(e) => handleStopMouseDown(e, s.id)}>
+                  <circle cx={stopPos[s.id].x} cy={stopPos[s.id].y}
+                    r={s.type==="station"?20:15}
                     fill="#111827" stroke={SC[s.type]} strokeWidth={2.5}/>
-                  <text x={SX[s.id]} y={SY[s.id]+1} textAnchor="middle" dominantBaseline="middle"
-                    fill={SC[s.type]} fontSize={11} fontWeight="800">{s.id}</text>
-                  <text x={SX[s.id]} y={SY[s.id]+30} textAnchor="middle"
-                    fill="#9ca3af" fontSize={10} fontWeight="500">{s.name}</text>
+                  <text x={stopPos[s.id].x} y={stopPos[s.id].y+1}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fill={SC[s.type]} fontSize={11} fontWeight="800"
+                    style={{ userSelect:"none", pointerEvents:"none" }}>{s.id}</text>
+                  <text x={stopPos[s.id].x} y={stopPos[s.id].y+30}
+                    textAnchor="middle"
+                    fill="#9ca3af" fontSize={10} fontWeight="500"
+                    style={{ userSelect:"none", pointerEvents:"none" }}>{s.name}</text>
                 </g>
               ))}
 
-              {/* Vehicles — pos is smoothly lerped toward park slot when waiting */}
+              {/* Vehicles */}
               {vs.map(s => {
                 const v = vehicles.find(x => x.id === s.id);
                 if (!v || !v.active) return null;
@@ -347,7 +375,8 @@ export default function App() {
                       fill={v.color} stroke={sel===v.id?"#fff":"#0a0f1e"}
                       strokeWidth={sel===v.id?2.5:1.5} opacity={isParked?0.75:1}/>
                     <text x={px} y={py+1} textAnchor="middle" dominantBaseline="middle"
-                      fill="#fff" fontSize={8} fontWeight="700">{v.id}</text>
+                      fill="#fff" fontSize={8} fontWeight="700"
+                      style={{ userSelect:"none", pointerEvents:"none" }}>{v.id}</text>
                   </g>
                 );
               })}
@@ -364,6 +393,9 @@ export default function App() {
               ))}
               <div style={{ borderTop:"1px solid #1f2937", marginTop:5, paddingTop:5, color:"#475569", fontSize:9 }}>
                 ▶ 一方通行レーン
+              </div>
+              <div style={{ color:"#475569", fontSize:9, marginTop:3 }}>
+                ⠿ 地点はドラッグで移動
               </div>
             </div>
           </div>
