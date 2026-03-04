@@ -263,9 +263,10 @@ export default function App() {
   const stopsMap = useMemo(() => Object.fromEntries(stopDefs.map(s => [s.id, s])), [stopDefs]);
 
   const [vs,            setVs]            = useState(() => {
-    const initDefs = loadLS("iino_defs", VEHICLE_DEFS);
-    const initPos  = loadLS("iino_stopPos", INIT_STOP_POS);
-    return buildVehicles(initDefs).map((v, i) => ({
+    const initDefs  = loadLS("iino_defs", VEHICLE_DEFS);
+    const initPos   = loadLS("iino_stopPos", INIT_STOP_POS);
+    const initEdges = loadLS("iino_edges", INIT_EDGES);
+    return buildVehicles(initDefs, adjFromEdges(initEdges)).map((v, i) => ({
       id: v.id, ri:0, prog:0,
       pos: { x: initPos[v.route[0]]?.x ?? 100, y: initPos[v.route[0]]?.y ?? 100 },
       park: null, wait: i * 1.1,
@@ -321,9 +322,9 @@ export default function App() {
       paxTimerR.current -= dt;
       if (paxTimerR.current <= 0) {
         paxTimerR.current = Math.random() * 10 + 5;
-        const weights = { A:1, B:2, C:5, D:2 };
-        let r = Math.random() * 10, spawnStop = "C";
-        for (const [sid, w] of Object.entries(weights)) { r -= w; if (r <= 0) { spawnStop = sid; break; } }
+        const stopIds = Object.keys(posR.current);
+        if (!stopIds.length) { paxTimerR.current = 5; return; }
+        const spawnStop = stopIds[Math.floor(Math.random() * stopIds.length)];
         newPax = { id: paxIdCounter++, stopId: spawnStop, status: "waiting" };
         newLogs.push(`🧍 ${stopsMapR.current[spawnStop]?.name || spawnStop}に乗客が発生`);
 
@@ -689,6 +690,7 @@ export default function App() {
               {/* Waiting passenger icons */}
               {waitingPax.map((p, i) => {
                 const sp2 = stopPos[p.stopId];
+                if (!sp2) return null;
                 return <text key={p.id}
                   x={sp2.x - 8 + (i%4)*10} y={sp2.y - 22 - Math.floor(i/4)*12}
                   fontSize={11} textAnchor="middle"
