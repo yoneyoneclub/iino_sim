@@ -397,6 +397,7 @@ export default function App() {
         const nri = s.ri + 1;
         if (nri >= route.length) {
           if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true, vid: s.id });
+          if (!s.pickupStop && s.paxCount > 0) pickupEvents.push({ loopDone: true, vid: s.id });
           const base = { ...s, ri:0, prog:0, customRoute:null, pickupStop:null, paxCount:0, obstacleTimer, obstacleType };
           if (v.mode === "loop")     return { ...base, wait:0.4 };
           if (v.mode === "ondemand") return { ...base, wait:3 };
@@ -461,9 +462,11 @@ export default function App() {
             if (e.loopPickup) {
               let cnt = e.count;
               p = p.map(x => {
-                if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) { cnt--; return { ...x, status: "done" }; }
+                if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) { cnt--; return { ...x, status: "boarding", vid: e.vid }; }
                 return x;
               });
+            } else if (e.loopDone) {
+              p = p.map(x => x.status === "boarding" && x.vid === e.vid ? { ...x, status: "done" } : x);
             } else if (!e.done) {
               p = p.map(x => x.stopId===e.stopId&&x.status==="waiting" ? {...x,status:"boarding"} : x);
             } else {
