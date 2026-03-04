@@ -23,25 +23,28 @@ const STOPS_INIT = [
   { id:"D", name:"商業",   type:"stop"    },
 ];
 
-const DIRECTED_EDGES = [
+const INIT_EDGES = [
   { from:"A", to:"B" }, { from:"B", to:"A" },
   { from:"B", to:"C" }, { from:"C", to:"B" },
   { from:"B", to:"D" }, { from:"D", to:"B" },
   { from:"C", to:"D" }, { from:"D", to:"C" },
 ];
 
-const ADJ = {};
-DIRECTED_EDGES.forEach(({ from: f, to: t }) => {
-  ADJ[f] = [...(ADJ[f] || []), t];
-});
+function adjFromEdges(edges) {
+  const adj = {};
+  edges.forEach(({ from: f, to: t }) => {
+    adj[f] = [...(adj[f] || []), t];
+  });
+  return adj;
+}
 
-function shortestPath(from, to) {
+function shortestPath(from, to, adj) {
   if (from === to) return [from];
   const queue = [[from]], visited = new Set([from]);
   while (queue.length) {
     const path = queue.shift();
     const cur = path[path.length - 1];
-    for (const nb of (ADJ[cur] || [])) {
+    for (const nb of (adj[cur] || [])) {
       if (visited.has(nb)) continue;
       const next = [...path, nb];
       if (nb === to) return next;
@@ -52,11 +55,11 @@ function shortestPath(from, to) {
   return null;
 }
 
-function expandRoute(waypoints) {
+function expandRoute(waypoints, adj) {
   if (waypoints.length < 2) return waypoints;
   const full = [waypoints[0]];
   for (let i = 0; i < waypoints.length - 1; i++) {
-    const seg = shortestPath(waypoints[i], waypoints[i + 1]);
+    const seg = shortestPath(waypoints[i], waypoints[i + 1], adj);
     if (seg) seg.slice(1).forEach(s => full.push(s));
   }
   return full;
@@ -111,8 +114,8 @@ const VEHICLE_DEFS = [
   { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#33CC77", capacity:2, speed:0.9, active:true },
 ];
 
-function buildVehicles(defs) {
-  return defs.map(d => ({ ...d, route: expandRoute(d.waypoints) }));
+function buildVehicles(defs, adj) {
+  return defs.map(d => ({ ...d, route: expandRoute(d.waypoints, adj) }));
 }
 
 // Light/dark text detection
@@ -250,7 +253,10 @@ const SliderRow = ({ label, value, min, max, step, unit, onChange }) => (
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [defs,          setDefs]          = useState(() => loadLS("iino_defs", VEHICLE_DEFS));
-  const vehicles = useMemo(() => buildVehicles(defs), [defs]);
+  const [edges,         setEdges]         = useState(() => loadLS("iino_edges", INIT_EDGES));
+  const adj = useMemo(() => adjFromEdges(edges), [edges]);
+  const adjR = useRef(adj); adjR.current = adj;
+  const vehicles = useMemo(() => buildVehicles(defs, adj), [defs, adj]);
 
   const [stopPos,       setStopPos]       = useState(() => loadLS("iino_stopPos", INIT_STOP_POS));
   const [stopDefs,      setStopDefs]      = useState(() => loadLS("iino_stopDefs", STOPS_INIT));
@@ -276,7 +282,11 @@ export default function App() {
   const [editId,        setEditId]        = useState(() => loadLS("iino_defs", VEHICLE_DEFS)[0]?.id ?? 1);
   const [localDefs,     setLocalDefs]     = useState(() => loadLS("iino_defs", VEHICLE_DEFS));
   const [localStopDefs, setLocalStopDefs] = useState(() => loadLS("iino_stopDefs", STOPS_INIT));
+  const [localEdges,    setLocalEdges]    = useState(() => loadLS("iino_edges", INIT_EDGES));
+  const [localStopPos,  setLocalStopPos]  = useState(() => loadLS("iino_stopPos", INIT_STOP_POS));
   const [cfgSub,        setCfgSub]        = useState("vehicle");
+  const [newEdgeFrom,   setNewEdgeFrom]   = useState("A");
+  const [newEdgeTo,     setNewEdgeTo]     = useState("B");
   const [pedDensity,    setPedDensity]    = useState(0.3);
   const [maxStop,       setMaxStop]       = useState(5);
   const [passengers,    setPassengers]    = useState([]);
@@ -358,8 +368,8 @@ export default function App() {
         // Apply dispatch
         if (dispatchVid === s.id && newPax) {
           const curStop = route[Math.min(s.ri, route.length-1)];
-          const toPickup = shortestPath(curStop, newPax.stopId) || [curStop, newPax.stopId];
-          const toEnd = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1]) || [newPax.stopId];
+          const toPickup = shortestPath(curStop, newPax.stopId, adjR.current) || [curStop, newPax.stopId];
+          const toEnd = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [newPax.stopId];
           const fullRoute = [...toPickup, ...toEnd.slice(1)];
           if (fullRoute.length < 2) {
             // Vehicle already at pickup stop (and it's the route endpoint) → instant boarding
@@ -425,9 +435,13 @@ export default function App() {
             }
           }
           // Arrival logging
+          let dispatchPickupCount = 0;
           if (s.pickupStop && toId === s.pickupStop) {
-            pickupEvents.push({ stopId: s.pickupStop, done: false, vid: s.id });
-            newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で乗車`);
+            const cap = v.capacity || 2;
+            const waitingHere = paxR.current.filter(x => x.stopId === toId && x.status === "waiting");
+            dispatchPickupCount = Math.max(1, Math.min(waitingHere.length, cap - s.paxCount));
+            pickupEvents.push({ stopId: s.pickupStop, done: false, count: dispatchPickupCount, vid: s.id });
+            newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で${dispatchPickupCount}人乗車`);
           } else if (loopPickupCount > 0) {
             newLogs.push(`🚌 ${v.name} ${stopsMapR.current[toId]?.name ?? toId}で${loopPickupCount}人乗車`);
           } else {
@@ -439,7 +453,7 @@ export default function App() {
           const park = { x:parkLane.x+(dx/len)*18, y:parkLane.y+(dy/len)*18 };
           const waitTime = (s.pickupStop && toId === s.pickupStop) ? 2.5 : 0.4;
           const newPaxCount = (s.pickupStop && toId === s.pickupStop)
-            ? s.paxCount + 1
+            ? s.paxCount + dispatchPickupCount
             : s.paxCount + loopPickupCount;
           return { ...s, ri:nri, prog:0, pos:lanePos(fromId,toId,1.0,sp), park, wait:waitTime,
             paxCount:newPaxCount, obstacleTimer, obstacleType };
@@ -468,7 +482,11 @@ export default function App() {
             } else if (e.loopDone) {
               p = p.map(x => x.status === "boarding" && x.vid === e.vid ? { ...x, status: "done" } : x);
             } else if (!e.done) {
-              p = p.map(x => x.stopId===e.stopId&&x.status==="waiting" ? {...x,status:"boarding"} : x);
+              let cnt = e.count || 1;
+              p = p.map(x => {
+                if (x.stopId===e.stopId && x.status==="waiting" && cnt > 0) { cnt--; return {...x,status:"boarding",vid:e.vid}; }
+                return x;
+              });
             } else {
               p = p.map(x => x.stopId===e.stopId&&x.status==="boarding" ? {...x,status:"done"} : x);
             }
@@ -525,7 +543,11 @@ export default function App() {
 
   // ── Config handlers ──────────────────────────────────────────────────────────
   const handleTabChange = t => {
-    if (t === "cfg") { setLocalDefs(defs); setLocalStopDefs(stopDefs); if (sel) setEditId(sel); }
+    if (t === "cfg") {
+      setLocalDefs(defs); setLocalStopDefs(stopDefs);
+      setLocalEdges(edges); setLocalStopPos(stopPos);
+      if (sel) setEditId(sel);
+    }
     setTab(t);
   };
 
@@ -553,18 +575,22 @@ export default function App() {
   };
 
   const save = () => {
-    const nv = buildVehicles(localDefs);
+    const newAdj = adjFromEdges(localEdges);
+    const nv = buildVehicles(localDefs, newAdj);
     setDefs(localDefs);
     setStopDefs(localStopDefs);
+    setEdges(localEdges);
+    setStopPos(localStopPos);
     localStorage.setItem("iino_defs",     JSON.stringify(localDefs));
-    localStorage.setItem("iino_stopPos",  JSON.stringify(stopPos));
+    localStorage.setItem("iino_stopPos",  JSON.stringify(localStopPos));
     localStorage.setItem("iino_stopDefs", JSON.stringify(localStopDefs));
+    localStorage.setItem("iino_edges",    JSON.stringify(localEdges));
     setVs(prev => {
       const byId = Object.fromEntries(prev.map(s => [s.id, s]));
       return nv.map((v, i) => {
         const startPos = v.route.length >= 2
-          ? lanePos(v.route[0], v.route[1], 0, stopPos)
-          : { x: stopPos[v.route[0]]?.x ?? 100, y: stopPos[v.route[0]]?.y ?? 100 };
+          ? lanePos(v.route[0], v.route[1], 0, localStopPos)
+          : { x: localStopPos[v.route[0]]?.x ?? 100, y: localStopPos[v.route[0]]?.y ?? 100 };
         const ex = byId[v.id];
         return ex
           ? { ...ex, ri:0, prog:0, wait:i*0.8, pos:startPos, park:null, customRoute:null, pickupStop:null, paxCount:0 }
@@ -589,8 +615,8 @@ export default function App() {
     if (!s || !v) return;
     const route = s.customRoute || v.route;
     const curStop = route[Math.min(s.ri, route.length-1)];
-    const toPickup = shortestPath(curStop, stopId) || [curStop, stopId];
-    const toEnd = shortestPath(stopId, v.waypoints[v.waypoints.length-1]) || [stopId];
+    const toPickup = shortestPath(curStop, stopId, adjR.current) || [curStop, stopId];
+    const toEnd = shortestPath(stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [stopId];
     setVs(prev => prev.map(x => x.id===vid
       ? { ...x, customRoute:[...toPickup,...toEnd.slice(1)], pickupStop:stopId, ri:0, prog:0 }
       : x
@@ -616,10 +642,11 @@ export default function App() {
     }
   };
 
-  const beds = [
-    { fromId:"A", toId:"B" }, { fromId:"B", toId:"C" },
-    { fromId:"B", toId:"D" }, { fromId:"C", toId:"D" },
-  ];
+  const beds = edges.reduce((acc, e) => {
+    const k1 = `${e.from}-${e.to}`, k2 = `${e.to}-${e.from}`;
+    if (!acc.seen.has(k1) && !acc.seen.has(k2)) { acc.seen.add(k1); acc.list.push({ fromId:e.from, toId:e.to }); }
+    return acc;
+  }, { seen: new Set(), list: [] }).list;
   const waitingPax  = passengers.filter(p => p.status === "waiting");
   const boardingPax = passengers.filter(p => p.status === "boarding");
 
@@ -639,12 +666,6 @@ export default function App() {
             }}>{l}</button>
           ))}
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-          <span style={{ fontSize:10, color:"#475569" }}>速度×{spd.toFixed(1)}</span>
-          <input type="range" min={0.1} max={2} step={0.1} value={spd}
-            onChange={e => { lt.current=null; setSpd(+e.target.value); spdR.current=+e.target.value; }}
-            style={{ width:55, accentColor:"#38bdf8" }}/>
-        </div>
       </div>
 
       {/* ── Map tab ── */}
@@ -661,7 +682,7 @@ export default function App() {
                 <line key={`h${i}`} x1={0} y1={i*40} x2={720} y2={i*40} stroke="#0d1424" strokeWidth={1}/>)}
 
               {beds.map(b => <RoadBed key={`bed-${b.fromId}-${b.toId}`} {...b} sp={stopPos}/>)}
-              {DIRECTED_EDGES.map(e => (
+              {edges.map(e => (
                 <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} sp={stopPos}/>
               ))}
 
@@ -767,12 +788,14 @@ export default function App() {
               </div>
             </div>
 
-            {/* Pedestrian controls */}
+            {/* Sliders panel */}
             <div style={{ position:"absolute", bottom:8, left:8,
                           background:"rgba(17,24,39,0.95)", borderRadius:6,
-                          padding:"9px 11px", border:"1px solid #1f2937", minWidth:185 }}>
-              <div style={{ color:"#38bdf8", fontWeight:700, fontSize:11, marginBottom:7 }}>🚶 歩行者・障害物</div>
-              <SliderRow label="密度（障害物の頻度）" value={pedDensity} min={0} max={1} step={0.05} unit="%"
+                          padding:"9px 11px", border:"1px solid #1f2937", minWidth:195 }}>
+              <div style={{ color:"#38bdf8", fontWeight:700, fontSize:11, marginBottom:7 }}>⚙️ 調整</div>
+              <SliderRow label="シミュレーション速度" value={spd} min={0.1} max={2} step={0.1} unit="×"
+                onChange={v => { lt.current=null; setSpd(v); spdR.current=v; }}/>
+              <SliderRow label="歩行者密度（障害物頻度）" value={pedDensity} min={0} max={1} step={0.05} unit="%"
                 onChange={v => { setPedDensity(v); pedR.current=v; }}/>
               <SliderRow label="最大停止・減速時間" value={maxStop} min={0.5} max={10} step={0.5} unit="秒"
                 onChange={v => { setMaxStop(v); maxStopR.current=v; }}/>
@@ -1018,7 +1041,7 @@ export default function App() {
             <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
               <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:4 }}>経由地（一方通行に沿って自動補間）</label>
               <div style={{ fontSize:9, color:"#38bdf8", marginBottom:8, lineHeight:1.6 }}>
-                展開後: {expandRoute(editDef.waypoints).join(" → ") || "（経路なし）"}
+                展開後: {expandRoute(editDef.waypoints, adjFromEdges(localEdges)).join(" → ") || "（経路なし）"}
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8, minHeight:32 }}>
                 {editDef.waypoints.map((sid, i) => (
@@ -1045,31 +1068,103 @@ export default function App() {
           </>)}
 
           {/* Stop sub-tab */}
-          {cfgSub === "stop" && (
-            <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
-              <div style={{ fontSize:10, color:"#64748b", marginBottom:10 }}>
-                地点の名前と種別を変更できます。道路のつながりは固定です。
-              </div>
-              {localStopDefs.map(s => (
-                <div key={s.id} style={{ display:"grid", gridTemplateColumns:"32px 1fr 1fr", gap:8,
-                                         alignItems:"center", marginBottom:10 }}>
-                  <div style={{ width:28, height:28, borderRadius:"50%", border:`2px solid ${SC[s.type]}`,
-                                background:"#0a0f1e", display:"flex", alignItems:"center",
-                                justifyContent:"center", fontSize:11, fontWeight:800, color:SC[s.type] }}>{s.id}</div>
-                  <input value={s.name}
-                    onChange={e => setLocalStopDefs(p => p.map(d => d.id===s.id ? {...d,name:e.target.value} : d))}
-                    style={{ padding:"6px 8px", background:"#0a0f1e", border:"1px solid #1f2937",
-                             borderRadius:4, color:"#e2e8f0", fontSize:12 }}/>
-                  <select value={s.type}
-                    onChange={e => setLocalStopDefs(p => p.map(d => d.id===s.id ? {...d,type:e.target.value} : d))}
-                    style={{ padding:"6px 8px", background:"#0a0f1e", border:"1px solid #1f2937",
-                             borderRadius:4, color:SC[s.type], fontSize:11 }}>
-                    {Object.entries(ST).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
+          {cfgSub === "stop" && (() => {
+            const addStop = () => {
+              const usedIds = new Set(localStopDefs.map(s => s.id));
+              const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+              let newId = null;
+              for (const c of letters) { if (!usedIds.has(c)) { newId = c; break; } }
+              if (!newId) return;
+              setLocalStopDefs(p => [...p, { id:newId, name:newId, type:"stop" }]);
+              setLocalStopPos(p => ({ ...p, [newId]: { x:360, y:215 } }));
+              setNewEdgeFrom(newId);
+            };
+            const removeStop = id => {
+              setLocalStopDefs(p => p.filter(s => s.id !== id));
+              setLocalEdges(p => p.filter(e => e.from !== id && e.to !== id));
+              setLocalStopPos(p => { const n = {...p}; delete n[id]; return n; });
+            };
+            const addEdge = () => {
+              if (newEdgeFrom === newEdgeTo) return;
+              if (localEdges.some(e => e.from === newEdgeFrom && e.to === newEdgeTo)) return;
+              setLocalEdges(p => [...p, { from: newEdgeFrom, to: newEdgeTo }]);
+            };
+            const removeEdge = (f, t) => setLocalEdges(p => p.filter(e => !(e.from===f && e.to===t)));
+            return (<>
+              {/* 地点リスト */}
+              <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <span style={{ fontSize:11, color:"#64748b" }}>地点</span>
+                  <button onClick={addStop} style={{
+                    padding:"4px 10px", borderRadius:4, border:"1px dashed #374151",
+                    background:"transparent", color:"#38bdf8", cursor:"pointer", fontSize:11, fontWeight:700
+                  }}>＋ 地点を追加</button>
                 </div>
-              ))}
-            </div>
-          )}
+                {localStopDefs.map(s => (
+                  <div key={s.id} style={{ display:"grid", gridTemplateColumns:"28px 1fr 1fr auto", gap:6,
+                                           alignItems:"center", marginBottom:8 }}>
+                    <div style={{ width:26, height:26, borderRadius:"50%", border:`2px solid ${SC[s.type]}`,
+                                  background:"#0a0f1e", display:"flex", alignItems:"center",
+                                  justifyContent:"center", fontSize:10, fontWeight:800, color:SC[s.type] }}>{s.id}</div>
+                    <input value={s.name}
+                      onChange={e => setLocalStopDefs(p => p.map(d => d.id===s.id ? {...d,name:e.target.value} : d))}
+                      style={{ padding:"5px 7px", background:"#0a0f1e", border:"1px solid #1f2937",
+                               borderRadius:4, color:"#e2e8f0", fontSize:11 }}/>
+                    <select value={s.type}
+                      onChange={e => setLocalStopDefs(p => p.map(d => d.id===s.id ? {...d,type:e.target.value} : d))}
+                      style={{ padding:"5px 7px", background:"#0a0f1e", border:"1px solid #1f2937",
+                               borderRadius:4, color:SC[s.type], fontSize:10 }}>
+                      {Object.entries(ST).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                    {!"ABCD".includes(s.id) ? (
+                      <button onClick={() => removeStop(s.id)} style={{
+                        padding:"4px 6px", borderRadius:3, border:"1px solid #7f1d1d",
+                        background:"transparent", color:"#ef4444", cursor:"pointer", fontSize:11
+                      }}>×</button>
+                    ) : <div/>}
+                  </div>
+                ))}
+              </div>
+
+              {/* エッジ（道路のつながり） */}
+              <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
+                <div style={{ fontSize:11, color:"#64748b", marginBottom:10 }}>道路のつながり（有向）</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:10 }}>
+                  {localEdges.map((e, i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"center", gap:2,
+                                          background:"#0a0f1e", borderRadius:4, padding:"3px 7px", fontSize:11 }}>
+                      <span style={{ color:SC[localStopDefs.find(s=>s.id===e.from)?.type||"stop"], fontWeight:700 }}>{e.from}</span>
+                      <span style={{ color:"#374151" }}>→</span>
+                      <span style={{ color:SC[localStopDefs.find(s=>s.id===e.to)?.type||"stop"], fontWeight:700 }}>{e.to}</span>
+                      <button onClick={() => removeEdge(e.from, e.to)} style={{
+                        background:"none", border:"none", color:"#ef4444",
+                        cursor:"pointer", padding:0, fontSize:13, marginLeft:2
+                      }}>×</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                  <select value={newEdgeFrom} onChange={e => setNewEdgeFrom(e.target.value)} style={{
+                    padding:"5px 7px", background:"#0a0f1e", border:"1px solid #1f2937",
+                    borderRadius:4, color:"#e2e8f0", fontSize:11
+                  }}>
+                    {localStopDefs.map(s => <option key={s.id} value={s.id}>{s.id} {s.name}</option>)}
+                  </select>
+                  <span style={{ color:"#475569" }}>→</span>
+                  <select value={newEdgeTo} onChange={e => setNewEdgeTo(e.target.value)} style={{
+                    padding:"5px 7px", background:"#0a0f1e", border:"1px solid #1f2937",
+                    borderRadius:4, color:"#e2e8f0", fontSize:11
+                  }}>
+                    {localStopDefs.map(s => <option key={s.id} value={s.id}>{s.id} {s.name}</option>)}
+                  </select>
+                  <button onClick={addEdge} style={{
+                    padding:"5px 10px", borderRadius:4, border:"none",
+                    background:"#0369a1", color:"#e2e8f0", cursor:"pointer", fontSize:11, fontWeight:700
+                  }}>追加</button>
+                </div>
+              </div>
+            </>);
+          })()}
 
           <button onClick={save} style={{
             width:"100%", padding:"10px", background:"#38bdf8", color:"#0a0f1e",
