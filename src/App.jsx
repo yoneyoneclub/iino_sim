@@ -1,8 +1,17 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── localStorage helper ───────────────────────────────────────────────────────
+const LS_VER = "v3-charnames"; // bump this to reset all saved data
+
 function loadLS(key, fallback) {
-  try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; }
+  try {
+    if (localStorage.getItem("iino_ver") !== LS_VER) {
+      localStorage.clear();
+      localStorage.setItem("iino_ver", LS_VER);
+    }
+    const s = localStorage.getItem(key);
+    return s ? JSON.parse(s) : fallback;
+  }
   catch { return fallback; }
 }
 
@@ -670,25 +679,31 @@ export default function App() {
             <div style={{ position:"absolute", top:8, left:8,
                           background:"rgba(17,24,39,0.93)", borderRadius:6,
                           padding:"8px 10px", border:"1px solid #1f2937", fontSize:10 }}>
-              <div style={{ color:"#38bdf8", fontWeight:700, marginBottom:5 }}>キャラクター（左色/右色）</div>
               <div style={{ display:"flex", flexDirection:"column", gap:3, marginBottom:6 }}>
-                {VEHICLE_DEFS.map(d => {
-                  const twoTone = d.color !== d.color2;
+                {vehicles.map(v => {
+                  const twoTone = v.color !== (v.color2 || v.color);
+                  const selHere = sel === v.id;
                   return (
-                    <div key={d.id} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                    <div key={v.id}
+                      onClick={() => setSel(v.id===sel ? null : v.id)}
+                      style={{ display:"flex", alignItems:"center", gap:4, cursor:"pointer",
+                               opacity: v.active ? 1 : 0.35 }}>
                       <svg width={16} height={16}>
                         {twoTone ? (
                           <>
-                            <path d="M 8 8 L 8 1 A 7 7 0 0 0 8 15 Z" fill={d.color}/>
-                            <path d="M 8 8 L 8 1 A 7 7 0 0 1 8 15 Z" fill={d.color2}/>
-                            <circle cx={8} cy={8} r={7} fill="none" stroke="#333" strokeWidth={0.5}/>
+                            <path d="M 8 8 L 8 1 A 7 7 0 0 0 8 15 Z" fill={v.color}/>
+                            <path d="M 8 8 L 8 1 A 7 7 0 0 1 8 15 Z" fill={v.color2}/>
+                            <circle cx={8} cy={8} r={7} fill="none"
+                              stroke={selHere?"#fff":"#333"} strokeWidth={selHere?1.5:0.5}/>
                           </>
                         ) : (
-                          <circle cx={8} cy={8} r={7} fill={d.color}
-                            stroke={isLight(d.color)?"#555":"none"} strokeWidth={0.5}/>
+                          <circle cx={8} cy={8} r={7} fill={v.color}
+                            stroke={selHere?"#fff":(isLight(v.color)?"#555":"none")}
+                            strokeWidth={selHere?1.5:0.5}/>
                         )}
                       </svg>
-                      <span style={{ color:"#94a3b8", fontSize:9 }}>{d.name}</span>
+                      <span style={{ color: selHere?"#e2e8f0":"#94a3b8", fontSize:9,
+                                     fontWeight: selHere?700:400 }}>{v.name}</span>
                     </div>
                   );
                 })}
@@ -755,90 +770,87 @@ export default function App() {
                 ))}
               </div>
             </div>
-          </div>
-
-          {/* Right panel */}
-          <div style={{ width:195, background:"#111827", borderLeft:"1px solid #1f2937",
-                        display:"flex", flexDirection:"column", overflow:"hidden" }}>
-            <div style={{ fontSize:10, color:"#475569", padding:"8px 10px 5px",
-                          borderBottom:"1px solid #1f2937" }}>車両一覧</div>
-            <div style={{ flex:1, overflowY:"auto", padding:"6px" }}>
-              {vehicles.map(v => {
-                const s     = vs.find(x => x.id === v.id);
-                const route = s?.customRoute || v.route;
-                const ri    = s ? Math.min(s.ri, route.length-1) : 0;
-                const cur   = stopsMap[route[ri]]?.name ?? "—";
-                const isDis = !!s?.pickupStop;
-                const isObs = s?.obstacleType && s.obstacleTimer > 0;
-                const pax   = s?.paxCount || 0;
-                const cap   = v.capacity || 2;
-                const twoTone = v.color !== (v.color2 || v.color);
-                return (
-                  <div key={v.id} onClick={() => setSel(v.id===sel ? null : v.id)} style={{
-                    padding:"7px 8px", borderRadius:6, cursor:"pointer", marginBottom:4,
-                    background:sel===v.id?"#1e3a5f":"#1a2535",
-                    border:`1px solid ${sel===v.id?v.color:"#1f2937"}`
-                  }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:2 }}>
-                      <svg width={12} height={12} style={{ flexShrink:0 }}>
-                        {twoTone ? (
-                          <>
-                            <path d="M 6 6 L 6 0 A 6 6 0 0 0 6 12 Z" fill={v.active?v.color:"#4b5563"}/>
-                            <path d="M 6 6 L 6 0 A 6 6 0 0 1 6 12 Z" fill={v.active?(v.color2||v.color):"#4b5563"}/>
-                          </>
-                        ) : (
-                          <circle cx={6} cy={6} r={6} fill={v.active?v.color:"#4b5563"}/>
-                        )}
-                      </svg>
-                      <span style={{ fontSize:11, fontWeight:600, flex:1, overflow:"hidden",
-                                     textOverflow:"ellipsis", whiteSpace:"nowrap",
-                                     color:v.active?"#e2e8f0":"#4b5563" }}>{v.name}</span>
-                      {isDis && <span style={{ fontSize:8, color:"#a78bfa", flexShrink:0 }}>配車</span>}
-                      {isObs && <span style={{ fontSize:8, flexShrink:0,
-                                               color:s.obstacleType==="stop"?"#ef4444":"#f59e0b" }}>
-                        {s.obstacleType==="stop"?"停止":"減速"}</span>}
-                    </div>
-                    <div style={{ fontSize:9, color:v.active?MC[v.mode]:"#374151" }}>{ML[v.mode]}</div>
-                    {v.active && (
-                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
-                        <div style={{ fontSize:9, color:"#6b7280" }}>📍 {cur}</div>
-                        {/* Passenger dots */}
-                        <div style={{ display:"flex", gap:2 }}>
-                          {Array.from({length:cap}).map((_,i) => (
-                            <div key={i} style={{ width:5, height:5, borderRadius:"50%",
-                              background:i<pax?"#fbbf24":"#1f2937",
-                              border:"1px solid #374151" }}/>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+            {/* ── Floating selected-vehicle card ── */}
+            {selV && (() => {
+              const selS   = vs.find(x => x.id === selV.id);
+              const route  = selS?.customRoute || selV.route;
+              const ri     = selS ? Math.min(selS.ri, route.length-1) : 0;
+              const cur    = stopsMap[route[ri]]?.name ?? "—";
+              const pax    = selS?.paxCount || 0;
+              const cap    = selV.capacity || 2;
+              const isDis  = !!selS?.pickupStop;
+              const isObs  = selS?.obstacleType && selS.obstacleTimer > 0;
+              const twoTone = selV.color !== (selV.color2 || selV.color);
+              return (
+                <div style={{ position:"absolute", top:8, right:8,
+                              background:"rgba(17,24,39,0.97)", borderRadius:8,
+                              padding:"10px 12px", border:`1px solid ${selV.color}`,
+                              minWidth:160, fontSize:10, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }}>
+                  {/* Header: color icon + name + close */}
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+                    <svg width={20} height={20}>
+                      {twoTone ? (
+                        <>
+                          <path d="M 10 10 L 10 1 A 9 9 0 0 0 10 19 Z" fill={selV.color}/>
+                          <path d="M 10 10 L 10 1 A 9 9 0 0 1 10 19 Z" fill={selV.color2||selV.color}/>
+                          <circle cx={10} cy={10} r={9} fill="none" stroke="#555" strokeWidth={0.5}/>
+                        </>
+                      ) : (
+                        <circle cx={10} cy={10} r={9} fill={selV.color}
+                          stroke={isLight(selV.color)?"#555":"none"} strokeWidth={0.5}/>
+                      )}
+                    </svg>
+                    <span style={{ fontSize:13, fontWeight:700, color:"#e2e8f0", flex:1 }}>{selV.name}</span>
+                    <button onClick={() => setSel(null)} style={{
+                      background:"none", border:"none", color:"#475569", cursor:"pointer",
+                      fontSize:14, padding:"0 2px", lineHeight:1
+                    }}>×</button>
                   </div>
-                );
-              })}
-            </div>
-            {selV && (
-              <div style={{ padding:"8px", borderTop:"1px solid #1f2937",
-                            display:"flex", flexDirection:"column", gap:4 }}>
-                <button onClick={() => toggleActive(selV.id)} style={{
-                  padding:"6px", borderRadius:4, border:"none", cursor:"pointer", fontSize:11,
-                  background:selV.active?"#7f1d1d":"#14532d",
-                  color:selV.active?"#fca5a5":"#86efac", fontWeight:600
-                }}>{selV.active?"⏹ 停止":"▶ 稼働"}</button>
-                <button onClick={() => { setEditId(selV.id); setLocalDefs(defs); setTab("cfg"); }} style={{
-                  padding:"6px", borderRadius:4, border:"none", cursor:"pointer", fontSize:11,
-                  background:"#1e3a5f", color:"#93c5fd", fontWeight:600
-                }}>✏️ 経路編集</button>
-                <div style={{ fontSize:9, color:"#475569" }}>配車先:</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
-                  {stopDefs.map(st => (
-                    <button key={st.id} onClick={() => dispatchTo(selV.id, st.id)} style={{
-                      padding:"3px 7px", borderRadius:3, border:`1px solid ${SC[st.type]}`,
-                      background:"transparent", color:SC[st.type], cursor:"pointer", fontSize:9
-                    }}>{st.name}</button>
-                  ))}
+
+                  {/* Status */}
+                  <div style={{ marginBottom:8 }}>
+                    <div style={{ color:"#6b7280", marginBottom:3 }}>📍 {cur}</div>
+                    <div style={{ color:MC[selV.mode], fontSize:9, marginBottom:3 }}>{ML[selV.mode]}</div>
+                    {isDis && <div style={{ color:"#a78bfa", fontSize:9 }}>📡 配車中</div>}
+                    {isObs && <div style={{ color:selS.obstacleType==="stop"?"#ef4444":"#f59e0b", fontSize:9 }}>
+                      {selS.obstacleType==="stop"?"🛑 停止中":"🟡 減速中"}</div>}
+                    {/* Pax dots */}
+                    <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
+                      <span style={{ color:"#475569", fontSize:9 }}>乗客:</span>
+                      {Array.from({length:cap}).map((_,i) => (
+                        <div key={i} style={{ width:7, height:7, borderRadius:"50%",
+                          background:i<pax?"#fbbf24":"#1f2937", border:"1px solid #374151" }}/>
+                      ))}
+                      <span style={{ color:"#475569", fontSize:9 }}>{pax}/{cap}</span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                    <div style={{ display:"flex", gap:4 }}>
+                      <button onClick={() => toggleActive(selV.id)} style={{
+                        flex:1, padding:"5px", borderRadius:4, border:"none", cursor:"pointer", fontSize:10,
+                        background:selV.active?"#7f1d1d":"#14532d",
+                        color:selV.active?"#fca5a5":"#86efac", fontWeight:600
+                      }}>{selV.active?"⏹ 停止":"▶ 稼働"}</button>
+                      <button onClick={() => { setEditId(selV.id); setLocalDefs(defs); setTab("cfg"); }} style={{
+                        flex:1, padding:"5px", borderRadius:4, border:"none", cursor:"pointer", fontSize:10,
+                        background:"#1e3a5f", color:"#93c5fd", fontWeight:600
+                      }}>✏️ 設定</button>
+                    </div>
+                    <div style={{ fontSize:9, color:"#475569" }}>配車先:</div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
+                      {stopDefs.map(st => (
+                        <button key={st.id} onClick={() => dispatchTo(selV.id, st.id)} style={{
+                          padding:"3px 7px", borderRadius:3, border:`1px solid ${SC[st.type]}`,
+                          background:"transparent", color:SC[st.type], cursor:"pointer", fontSize:9
+                        }}>{st.name}</button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
