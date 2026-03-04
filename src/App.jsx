@@ -642,10 +642,11 @@ export default function App() {
     }
   };
 
-  const beds = [
-    { fromId:"A", toId:"B" }, { fromId:"B", toId:"C" },
-    { fromId:"B", toId:"D" }, { fromId:"C", toId:"D" },
-  ];
+  const beds = edges.reduce((acc, e) => {
+    const k1 = `${e.from}-${e.to}`, k2 = `${e.to}-${e.from}`;
+    if (!acc.seen.has(k1) && !acc.seen.has(k2)) { acc.seen.add(k1); acc.list.push({ fromId:e.from, toId:e.to }); }
+    return acc;
+  }, { seen: new Set(), list: [] }).list;
   const waitingPax  = passengers.filter(p => p.status === "waiting");
   const boardingPax = passengers.filter(p => p.status === "boarding");
 
@@ -665,12 +666,6 @@ export default function App() {
             }}>{l}</button>
           ))}
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-          <span style={{ fontSize:10, color:"#475569" }}>速度×{spd.toFixed(1)}</span>
-          <input type="range" min={0.1} max={2} step={0.1} value={spd}
-            onChange={e => { lt.current=null; setSpd(+e.target.value); spdR.current=+e.target.value; }}
-            style={{ width:55, accentColor:"#38bdf8" }}/>
-        </div>
       </div>
 
       {/* ── Map tab ── */}
@@ -687,7 +682,7 @@ export default function App() {
                 <line key={`h${i}`} x1={0} y1={i*40} x2={720} y2={i*40} stroke="#0d1424" strokeWidth={1}/>)}
 
               {beds.map(b => <RoadBed key={`bed-${b.fromId}-${b.toId}`} {...b} sp={stopPos}/>)}
-              {DIRECTED_EDGES.map(e => (
+              {edges.map(e => (
                 <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} sp={stopPos}/>
               ))}
 
@@ -793,12 +788,14 @@ export default function App() {
               </div>
             </div>
 
-            {/* Pedestrian controls */}
+            {/* Sliders panel */}
             <div style={{ position:"absolute", bottom:8, left:8,
                           background:"rgba(17,24,39,0.95)", borderRadius:6,
-                          padding:"9px 11px", border:"1px solid #1f2937", minWidth:185 }}>
-              <div style={{ color:"#38bdf8", fontWeight:700, fontSize:11, marginBottom:7 }}>🚶 歩行者・障害物</div>
-              <SliderRow label="密度（障害物の頻度）" value={pedDensity} min={0} max={1} step={0.05} unit="%"
+                          padding:"9px 11px", border:"1px solid #1f2937", minWidth:195 }}>
+              <div style={{ color:"#38bdf8", fontWeight:700, fontSize:11, marginBottom:7 }}>⚙️ 調整</div>
+              <SliderRow label="シミュレーション速度" value={spd} min={0.1} max={2} step={0.1} unit="×"
+                onChange={v => { lt.current=null; setSpd(v); spdR.current=v; }}/>
+              <SliderRow label="歩行者密度（障害物頻度）" value={pedDensity} min={0} max={1} step={0.05} unit="%"
                 onChange={v => { setPedDensity(v); pedR.current=v; }}/>
               <SliderRow label="最大停止・減速時間" value={maxStop} min={0.5} max={10} step={0.5} unit="秒"
                 onChange={v => { setMaxStop(v); maxStopR.current=v; }}/>
@@ -1044,7 +1041,7 @@ export default function App() {
             <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
               <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:4 }}>経由地（一方通行に沿って自動補間）</label>
               <div style={{ fontSize:9, color:"#38bdf8", marginBottom:8, lineHeight:1.6 }}>
-                展開後: {expandRoute(editDef.waypoints).join(" → ") || "（経路なし）"}
+                展開後: {expandRoute(editDef.waypoints, adjFromEdges(localEdges)).join(" → ") || "（経路なし）"}
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8, minHeight:32 }}>
                 {editDef.waypoints.map((sid, i) => (
