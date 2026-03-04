@@ -81,43 +81,34 @@ function segDist(aId, bId, sp) {
   return Math.hypot(sp[bId].x - sp[aId].x, sp[bId].y - sp[aId].y);
 }
 
-// ─── Character colors ─────────────────────────────────────────────────────────
-// 1-5: kiha/subi/teyu/mete/kito  6-10: roha/hemi/colu/nere/yako
-const CHAR_COLORS = [
-  "#FFE033", // kiha  - 黄
-  "#3377EE", // subi  - 青
-  "#F0F0F0", // teyu  - 灰
-  "#FF8833", // mete  - 橙
-  "#FF5555", // kito  - 赤ピンク
-  "#55AAEE", // roha  - 水色
-  "#33CC77", // hemi  - 緑
-  "#9933CC", // colu  - 紫
-  "#3377EE", // nere  - 青
-  "#33CC77", // yako  - 緑
-];
+// ─── Character colors (primary + secondary) ───────────────────────────────────
+// 1-5: kiha/subi/teyu/mete/kito
+// 6-10: roha/hemi/colu/nere/yako
+const CHAR_COLORS  = ["#FFE033","#3377EE","#F0F0F0","#FF8833","#FF5555","#55AAEE","#33CC77","#F0F0F0","#3377EE","#F0F0F0"];
+const CHAR_COLORS2 = ["#FFE033","#3377EE","#F0F0F0","#FF8833","#FF5555","#AA55EE","#AA55EE","#9933CC","#FFE033","#33CC77"];
+const CHAR_NAMES   = ["kiha","subi","teyu","mete","kito","roha","hemi","colu","nere","yako"];
 
 // ─── Vehicle definitions ──────────────────────────────────────────────────────
-const CHAR_NAMES = ["kiha","subi","teyu","mete","kito","roha","hemi","colu","nere","yako"];
-
 const VEHICLE_DEFS = [
-  { id:1,  name:"kiha", mode:"loop", waypoints:["A","B","A"], color:"#FFE033", speed:0.8, active:true },
-  { id:2,  name:"subi", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", speed:0.6, active:true },
-  { id:3,  name:"teyu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", speed:0.7, active:true },
-  { id:4,  name:"mete", mode:"loop", waypoints:["A","B","A"], color:"#FF8833", speed:0.9, active:true },
-  { id:5,  name:"kito", mode:"loop", waypoints:["A","B","A"], color:"#FF5555", speed:0.8, active:true },
-  { id:6,  name:"roha", mode:"loop", waypoints:["A","D","A"], color:"#55AAEE", speed:0.8, active:true },
-  { id:7,  name:"hemi", mode:"loop", waypoints:["A","C","A"], color:"#33CC77", speed:0.8, active:true },
-  { id:8,  name:"colu", mode:"loop", waypoints:["A","B","A"], color:"#9933CC", speed:0.7, active:true },
-  { id:9,  name:"nere", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", speed:0.6, active:true },
-  { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#33CC77", speed:0.9, active:true },
+  { id:1,  name:"kiha", mode:"loop", waypoints:["A","B","A"], color:"#FFE033", color2:"#FFE033", capacity:2, speed:0.8, active:true },
+  { id:2,  name:"subi", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#3377EE", capacity:2, speed:0.6, active:true },
+  { id:3,  name:"teyu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#F0F0F0", capacity:2, speed:0.7, active:true },
+  { id:4,  name:"mete", mode:"loop", waypoints:["A","B","A"], color:"#FF8833", color2:"#FF8833", capacity:2, speed:0.9, active:true },
+  { id:5,  name:"kito", mode:"loop", waypoints:["A","B","A"], color:"#FF5555", color2:"#FF5555", capacity:2, speed:0.8, active:true },
+  { id:6,  name:"roha", mode:"loop", waypoints:["A","D","A"], color:"#55AAEE", color2:"#AA55EE", capacity:2, speed:0.8, active:true },
+  { id:7,  name:"hemi", mode:"loop", waypoints:["A","C","A"], color:"#33CC77", color2:"#AA55EE", capacity:2, speed:0.8, active:true },
+  { id:8,  name:"colu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#9933CC", capacity:2, speed:0.7, active:true },
+  { id:9,  name:"nere", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#FFE033", capacity:2, speed:0.6, active:true },
+  { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#33CC77", capacity:2, speed:0.9, active:true },
 ];
 
 function buildVehicles(defs) {
   return defs.map(d => ({ ...d, route: expandRoute(d.waypoints) }));
 }
 
-// Luminance check → dark text on light vehicle badges
+// Light/dark text detection
 function isLight(hex) {
+  if (!hex || hex.length < 7) return false;
   const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
   return (r*299 + g*587 + b*114) / 1000 > 160;
 }
@@ -131,12 +122,12 @@ let paxIdCounter = 1;
 
 // ─── Road rendering ───────────────────────────────────────────────────────────
 function DirectedLane({ fromId, toId, sp }) {
-  const fx = sp[fromId].x, fy = sp[fromId].y, tx = sp[toId].x, ty = sp[toId].y;
+  const fx=sp[fromId].x, fy=sp[fromId].y, tx=sp[toId].x, ty=sp[toId].y;
   const { ox, oy } = laneVec(fromId, toId, sp);
-  const x1 = fx+ox, y1 = fy+oy, x2 = tx+ox, y2 = ty+oy;
-  const dx = tx-fx, dy = ty-fy, len = Math.hypot(dx,dy)||1;
-  const ux = dx/len, uy = dy/len;
-  const mx = (x1+x2)/2, my = (y1+y2)/2;
+  const x1=fx+ox, y1=fy+oy, x2=tx+ox, y2=ty+oy;
+  const dx=tx-fx, dy=ty-fy, len=Math.hypot(dx,dy)||1;
+  const ux=dx/len, uy=dy/len;
+  const mx=(x1+x2)/2, my=(y1+y2)/2;
   const AW=7, AL=10;
   const ax=mx+ux*AL, ay=my+uy*AL;
   const bx=mx-ux*AL/2+uy*AW, by=my-uy*AL/2-ux*AW;
@@ -153,6 +144,84 @@ function DirectedLane({ fromId, toId, sp }) {
 function RoadBed({ fromId, toId, sp }) {
   return <line x1={sp[fromId].x} y1={sp[fromId].y} x2={sp[toId].x} y2={sp[toId].y}
     stroke="#161f30" strokeWidth={LANE*4.5} strokeLinecap="round"/>;
+}
+
+// ─── Two-tone vehicle circle ──────────────────────────────────────────────────
+function VehicleCircle({ px, py, v, selected, isParked, isStopped, isSlowed, isDispatched, paxCount }) {
+  const R = 11;
+  const c1 = v.color, c2 = v.color2 || v.color;
+  const twoTone = c1 !== c2;
+  const cap     = v.capacity || 2;
+
+  // Text color: choose based on the lighter side
+  const textDark = isLight(c1) || isLight(c2);
+  const textCol  = textDark ? "#222" : "#fff";
+
+  return (
+    <g>
+      {/* Selection glow */}
+      {selected && <circle cx={px} cy={py} r={21} fill={c1} fillOpacity={0.15}/>}
+
+      {/* Dispatch ring */}
+      {isDispatched && <circle cx={px} cy={py} r={15}
+        fill="none" stroke="#a78bfa" strokeWidth={2} strokeDasharray="3 2"/>}
+
+      {/* Obstacle rings */}
+      {isStopped && <circle cx={px} cy={py} r={14}
+        fill="none" stroke="#ef4444" strokeWidth={1.5} opacity={0.7}/>}
+      {isSlowed && <circle cx={px} cy={py} r={14}
+        fill="none" stroke="#f59e0b" strokeWidth={1.5} opacity={0.7}/>}
+
+      {/* Vehicle body – split circle for two-tone */}
+      {twoTone ? (
+        <>
+          {/* Left half */}
+          <path d={`M ${px} ${py} L ${px} ${py-R} A ${R} ${R} 0 0 0 ${px} ${py+R} Z`}
+            fill={c1} opacity={isParked?0.72:1}/>
+          {/* Right half */}
+          <path d={`M ${px} ${py} L ${px} ${py-R} A ${R} ${R} 0 0 1 ${px} ${py+R} Z`}
+            fill={c2} opacity={isParked?0.72:1}/>
+          {/* Divider line */}
+          <line x1={px} y1={py-R} x2={px} y2={py+R}
+            stroke={selected?"#fff":"rgba(0,0,0,0.25)"} strokeWidth={selected?1:0.5}/>
+          {/* Border */}
+          <circle cx={px} cy={py} r={R}
+            fill="none"
+            stroke={selected?"#fff":"#0a0f1e"}
+            strokeWidth={selected?2.5:1.5}
+            opacity={isParked?0.72:1}/>
+        </>
+      ) : (
+        <circle cx={px} cy={py} r={R}
+          fill={c1}
+          stroke={selected?"#fff":"#0a0f1e"}
+          strokeWidth={selected?2.5:1.5}
+          opacity={isParked?0.72:1}/>
+      )}
+
+      {/* Character name */}
+      <text x={px} y={py+1} textAnchor="middle" dominantBaseline="middle"
+        fill={textCol} fontSize={5.5} fontWeight="700"
+        stroke={textDark?"rgba(255,255,255,0.3)":"rgba(0,0,0,0.4)"} strokeWidth={0.6}
+        paintOrder="stroke"
+        style={{ userSelect:"none", pointerEvents:"none" }}>{v.name}</text>
+
+      {/* Passenger capacity dots */}
+      {cap > 1 && (
+        <g>
+          {Array.from({length: cap}).map((_, i) => {
+            const dotX = px - (cap-1) * 3 + i * 6;
+            const dotY = py - R - 3;
+            return (
+              <circle key={i} cx={dotX} cy={dotY} r={1.8}
+                fill={i < paxCount ? "#fbbf24" : "rgba(255,255,255,0.25)"}
+                stroke="rgba(0,0,0,0.3)" strokeWidth={0.5}/>
+            );
+          })}
+        </g>
+      )}
+    </g>
+  );
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -173,6 +242,7 @@ export default function App() {
       park: null, wait: i * 1.1,
       obstacleTimer: 0, obstacleType: null,
       customRoute: null, pickupStop: null,
+      paxCount: 0,
     }));
   });
 
@@ -189,18 +259,18 @@ export default function App() {
   const [passengers,    setPassengers]    = useState([]);
   const [autoDis,       setAutoDis]       = useState(true);
 
-  const dragRef      = useRef(null);
-  const lt           = useRef(null);
-  const vrRef        = useRef(vehicles);   vrRef.current      = vehicles;
-  const posR         = useRef(stopPos);    posR.current       = stopPos;
-  const stopsMapR    = useRef(stopsMap);   stopsMapR.current  = stopsMap;
-  const vsR          = useRef(vs);         vsR.current        = vs;
-  const paxR         = useRef(passengers); paxR.current       = passengers;
-  const spdR         = useRef(spd);        spdR.current       = spd;
-  const pedR         = useRef(pedDensity); pedR.current       = pedDensity;
-  const maxStopR     = useRef(maxStop);    maxStopR.current   = maxStop;
-  const autoDisR     = useRef(autoDis);    autoDisR.current   = autoDis;
-  const paxTimerR    = useRef(Math.random() * 8 + 6);
+  const dragRef   = useRef(null);
+  const lt        = useRef(null);
+  const vrRef     = useRef(vehicles);    vrRef.current    = vehicles;
+  const posR      = useRef(stopPos);     posR.current     = stopPos;
+  const stopsMapR = useRef(stopsMap);    stopsMapR.current= stopsMap;
+  const vsR       = useRef(vs);          vsR.current      = vs;
+  const paxR      = useRef(passengers);  paxR.current     = passengers;
+  const spdR      = useRef(spd);         spdR.current     = spd;
+  const pedR      = useRef(pedDensity);  pedR.current     = pedDensity;
+  const maxStopR  = useRef(maxStop);     maxStopR.current = maxStop;
+  const autoDisR  = useRef(autoDis);     autoDisR.current = autoDis;
+  const paxTimerR = useRef(Math.random() * 8 + 6);
 
   // ── Animation loop ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -212,8 +282,7 @@ export default function App() {
       const sp = posR.current;
 
       // Passenger spawn
-      let newPax = null;
-      let dispatchVid = null;
+      let newPax = null, dispatchVid = null;
       const newLogs = [];
 
       paxTimerR.current -= dt;
@@ -224,24 +293,25 @@ export default function App() {
         for (const [sid, w] of Object.entries(weights)) { r -= w; if (r <= 0) { spawnStop = sid; break; } }
         newPax = { id: paxIdCounter++, stopId: spawnStop, status: "waiting" };
         newLogs.push(`🧍 ${stopsMapR.current[spawnStop]?.name || spawnStop}に乗客が発生`);
+
         if (autoDisR.current) {
           const tPos = sp[spawnStop];
           let best = null, bestDist = Infinity;
           for (const s of vsR.current) {
             const v = vrRef.current.find(x => x.id === s.id);
             if (!v || !v.active || s.pickupStop) continue;
+            if (s.paxCount >= (v.capacity || 2)) continue; // at capacity
             const d = Math.hypot(s.pos.x - tPos.x, s.pos.y - tPos.y);
             if (d < bestDist) { bestDist = d; best = s; }
           }
           if (best) {
             dispatchVid = best.id;
-            const vname = vrRef.current.find(x => x.id === best.id)?.name || `id${best.id}`;
-            newLogs.push(`🚗 ${vname} → ${stopsMapR.current[spawnStop]?.name || spawnStop}へ出動`);
+            newLogs.push(`🚗 ${vrRef.current.find(x=>x.id===best.id)?.name} → ${stopsMapR.current[spawnStop]?.name || spawnStop}へ出動`);
           }
         }
       }
 
-      // Occupancy map
+      // Occupancy
       const prevVs = vsR.current;
       const occ = {};
       prevVs.forEach(s => {
@@ -252,8 +322,7 @@ export default function App() {
         const nri = s.ri + 1;
         if (nri >= route.length) return;
         const key = `${route[s.ri]}-${route[nri]}`;
-        if (!occ[key]) occ[key] = [];
-        occ[key].push({ id: v.id, prog: s.prog });
+        (occ[key] = occ[key] || []).push({ id: v.id, prog: s.prog });
       });
 
       const pickupEvents = [];
@@ -268,8 +337,7 @@ export default function App() {
           const curStop = route[Math.min(s.ri, route.length-1)];
           const toPickup = shortestPath(curStop, newPax.stopId) || [curStop, newPax.stopId];
           const toEnd = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1]) || [newPax.stopId];
-          const dr = [...toPickup, ...toEnd.slice(1)];
-          return { ...s, customRoute: dr, pickupStop: newPax.stopId, ri:0, prog:0 };
+          return { ...s, customRoute:[...toPickup, ...toEnd.slice(1)], pickupStop:newPax.stopId, ri:0, prog:0 };
         }
 
         if (route.length < 2) return s;
@@ -279,16 +347,14 @@ export default function App() {
         if (obstacleTimer > 0) {
           obstacleTimer = Math.max(0, obstacleTimer - dt);
           if (obstacleTimer === 0) obstacleType = null;
-        } else {
-          if (Math.random() < pedR.current * 0.01) {
-            obstacleTimer = Math.random() * maxStopR.current + 0.5;
-            obstacleType  = Math.random() < 0.5 ? "stop" : "slow";
-          }
+        } else if (Math.random() < pedR.current * 0.01) {
+          obstacleTimer = Math.random() * maxStopR.current + 0.5;
+          obstacleType  = Math.random() < 0.5 ? "stop" : "slow";
         }
         if (obstacleType === "stop" && obstacleTimer > 0)
           return { ...s, obstacleTimer, obstacleType };
 
-        // Wait
+        // Wait at stop
         if (s.wait > 0) {
           const alpha = Math.min(1, dt * 5);
           const tx = s.park ? s.park.x : s.pos.x;
@@ -299,10 +365,11 @@ export default function App() {
 
         const nri = s.ri + 1;
         if (nri >= route.length) {
-          if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true });
-          if (v.mode === "loop") return { ...s, ri:0, prog:0, wait:0.4, customRoute:null, pickupStop:null, obstacleTimer, obstacleType };
-          if (v.mode === "ondemand") return { ...s, ri:0, prog:0, wait:3, customRoute:null, pickupStop:null, obstacleTimer, obstacleType };
-          return { ...s, ri:0, prog:0, wait:1, customRoute:null, pickupStop:null, obstacleTimer, obstacleType };
+          if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true, vid: s.id });
+          const base = { ...s, ri:0, prog:0, customRoute:null, pickupStop:null, paxCount:0, obstacleTimer, obstacleType };
+          if (v.mode === "loop")     return { ...base, wait:0.4 };
+          if (v.mode === "ondemand") return { ...base, wait:3 };
+          return { ...base, wait:1 };
         }
 
         const fromId = route[s.ri], toId = route[nri];
@@ -315,23 +382,27 @@ export default function App() {
         const np     = s.prog + adv;
 
         if (np >= 1) {
-          if (s.pickupStop && toId === s.pickupStop)
-            pickupEvents.push({ stopId: s.pickupStop, done: false });
-          newLogs.push(`${v.name} → ${stopsMapR.current[toId]?.name ?? toId}`);
+          // Arrival at pickup stop
+          if (s.pickupStop && toId === s.pickupStop) {
+            pickupEvents.push({ stopId: s.pickupStop, done: false, vid: s.id });
+            newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で乗車`);
+          } else {
+            newLogs.push(`${v.name} → ${stopsMapR.current[toId]?.name ?? toId}`);
+          }
           const parkLane = lanePos(fromId, toId, 1.0, sp);
-          const dx = sp[toId].x-sp[fromId].x, dy = sp[toId].y-sp[fromId].y;
-          const len = Math.hypot(dx,dy)||1;
-          const park = { x: parkLane.x+(dx/len)*18, y: parkLane.y+(dy/len)*18 };
+          const dx=sp[toId].x-sp[fromId].x, dy=sp[toId].y-sp[fromId].y;
+          const len=Math.hypot(dx,dy)||1;
+          const park = { x:parkLane.x+(dx/len)*18, y:parkLane.y+(dy/len)*18 };
           const waitTime = (s.pickupStop && toId === s.pickupStop) ? 2.5 : 0.4;
-          return { ...s, ri:nri, prog:0, pos:lanePos(fromId,toId,1.0,sp), park, wait:waitTime, obstacleTimer, obstacleType };
+          const newPaxCount = (s.pickupStop && toId === s.pickupStop) ? s.paxCount + 1 : s.paxCount;
+          return { ...s, ri:nri, prog:0, pos:lanePos(fromId,toId,1.0,sp), park, wait:waitTime,
+            paxCount:newPaxCount, obstacleTimer, obstacleType };
         }
         return { ...s, prog:np, pos:lanePos(fromId,toId,np,sp), park:null, obstacleTimer, obstacleType };
       });
 
       pickupEvents.forEach(e => {
-        newLogs.push(e.done
-          ? `✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`
-          : `🧍→🚗 ${stopsMapR.current[e.stopId]?.name || e.stopId}で乗車`);
+        if (e.done) newLogs.push(`✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`);
       });
 
       vsR.current = nextVs;
@@ -360,12 +431,12 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // ── Stop drag (RAF-throttled) ────────────────────────────────────────────────
+  // ── Stop drag ────────────────────────────────────────────────────────────────
   const handleStopMouseDown = useCallback((e, id) => {
     e.stopPropagation();
     const svg = e.currentTarget.closest("svg");
     const rect = svg.getBoundingClientRect();
-    const sx = 720/rect.width, sy = 430/rect.height;
+    const sx=720/rect.width, sy=430/rect.height;
     dragRef.current = {
       id,
       ox: (e.clientX-rect.left)*sx - posR.current[id].x,
@@ -376,13 +447,13 @@ export default function App() {
   const handleSvgMouseMove = useCallback((e) => {
     if (!dragRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const sx = 720/rect.width, sy = 430/rect.height;
+    const sx=720/rect.width, sy=430/rect.height;
     dragRef.current.pendingX = Math.max(20, Math.min(700, (e.clientX-rect.left)*sx - dragRef.current.ox));
     dragRef.current.pendingY = Math.max(20, Math.min(410, (e.clientY-rect.top)*sy  - dragRef.current.oy));
     if (!dragRef.current.rafId) {
       dragRef.current.rafId = requestAnimationFrame(() => {
         if (dragRef.current) {
-          const { id, pendingX: x, pendingY: y } = dragRef.current;
+          const { id, pendingX:x, pendingY:y } = dragRef.current;
           setStopPos(prev => ({ ...prev, [id]: { x, y } }));
           dragRef.current.rafId = null;
         }
@@ -391,12 +462,11 @@ export default function App() {
   }, []);
 
   const handleSvgMouseUp = useCallback(() => {
-    if (dragRef.current)
-      localStorage.setItem("iino_stopPos", JSON.stringify(posR.current));
+    if (dragRef.current) localStorage.setItem("iino_stopPos", JSON.stringify(posR.current));
     dragRef.current = null;
   }, []);
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // ── Config handlers ──────────────────────────────────────────────────────────
   const handleTabChange = t => {
     if (t === "cfg") { setLocalDefs(defs); setLocalStopDefs(stopDefs); if (sel) setEditId(sel); }
     setTab(t);
@@ -408,21 +478,19 @@ export default function App() {
 
   const addVehicle = () => {
     const maxId = Math.max(0, ...localDefs.map(d => d.id));
-    const newId = maxId + 1;
-    const newDef = {
-      id: newId, name: CHAR_NAMES[(newId-1) % CHAR_NAMES.length] || `iino-${String(newId).padStart(2,"0")}`,
-      mode: "loop", waypoints: ["A","B","A"],
-      color: CHAR_COLORS[(newId-1) % CHAR_COLORS.length],
-      speed: 0.8, active: true,
-    };
-    setLocalDefs(p => [...p, newDef]);
-    setEditId(newId);
+    const nid = maxId + 1;
+    const idx = (nid - 1) % CHAR_NAMES.length;
+    setLocalDefs(p => [...p, {
+      id:nid, name:CHAR_NAMES[idx], mode:"loop", waypoints:["A","B","A"],
+      color:CHAR_COLORS[idx], color2:CHAR_COLORS2[idx], capacity:2, speed:0.8, active:true,
+    }]);
+    setEditId(nid);
   };
 
   const removeVehicle = id => {
     setLocalDefs(p => {
       const next = p.filter(d => d.id !== id);
-      if (editId === id && next.length > 0) setEditId(next[0].id);
+      if (editId === id && next.length) setEditId(next[0].id);
       return next;
     });
   };
@@ -442,8 +510,9 @@ export default function App() {
           : { x: stopPos[v.route[0]]?.x ?? 100, y: stopPos[v.route[0]]?.y ?? 100 };
         const ex = byId[v.id];
         return ex
-          ? { ...ex, ri:0, prog:0, wait:i*0.8, pos:startPos, park:null, customRoute:null, pickupStop:null }
-          : { id:v.id, ri:0, prog:0, pos:startPos, park:null, wait:i*0.8, obstacleTimer:0, obstacleType:null, customRoute:null, pickupStop:null };
+          ? { ...ex, ri:0, prog:0, wait:i*0.8, pos:startPos, park:null, customRoute:null, pickupStop:null, paxCount:0 }
+          : { id:v.id, ri:0, prog:0, pos:startPos, park:null, wait:i*0.8,
+              obstacleTimer:0, obstacleType:null, customRoute:null, pickupStop:null, paxCount:0 };
       });
     });
     setTab("map");
@@ -465,8 +534,10 @@ export default function App() {
     const curStop = route[Math.min(s.ri, route.length-1)];
     const toPickup = shortestPath(curStop, stopId) || [curStop, stopId];
     const toEnd = shortestPath(stopId, v.waypoints[v.waypoints.length-1]) || [stopId];
-    const dr = [...toPickup, ...toEnd.slice(1)];
-    setVs(prev => prev.map(x => x.id===vid ? { ...x, customRoute:dr, pickupStop:stopId, ri:0, prog:0 } : x));
+    setVs(prev => prev.map(x => x.id===vid
+      ? { ...x, customRoute:[...toPickup,...toEnd.slice(1)], pickupStop:stopId, ri:0, prog:0 }
+      : x
+    ));
     setLogs(p => [{ t:Date.now(), m:`📡 ${v.name}を${stopsMap[stopId]?.name||stopId}へ手動配車` }, ...p].slice(0,80));
   };
 
@@ -480,8 +551,9 @@ export default function App() {
       for (const s of vsR.current) {
         const vd = vehicles.find(x => x.id === s.id);
         if (!vd || !vd.active || s.pickupStop) continue;
+        if (s.paxCount >= (vd.capacity || 2)) continue;
         const d = Math.hypot(s.pos.x-tPos.x, s.pos.y-tPos.y);
-        if (d < bestDist) { bestDist = d; best = s; }
+        if (d < bestDist) { bestDist=d; best=s; }
       }
       if (best) dispatchTo(best.id, stopId);
     }
@@ -498,7 +570,9 @@ export default function App() {
     <div style={{ marginBottom:7 }}>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
         <span style={{ color:"#94a3b8", fontSize:10 }}>{label}</span>
-        <span style={{ color:"#e2e8f0", fontSize:10 }}>{typeof value==="number"&&value%1!==0 ? value.toFixed(1) : value}{unit}</span>
+        <span style={{ color:"#e2e8f0", fontSize:10 }}>
+          {typeof value==="number"&&value%1!==0 ? value.toFixed(1) : value}{unit}
+        </span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(+e.target.value)} style={{ width:"100%", accentColor:"#38bdf8" }}/>
@@ -541,12 +615,13 @@ export default function App() {
                 <line key={`v${i}`} x1={i*40} y1={0} x2={i*40} y2={430} stroke="#0d1424" strokeWidth={1}/>)}
               {Array.from({length:11}).map((_,i)=>
                 <line key={`h${i}`} x1={0} y1={i*40} x2={720} y2={i*40} stroke="#0d1424" strokeWidth={1}/>)}
+
               {beds.map(b => <RoadBed key={`bed-${b.fromId}-${b.toId}`} {...b} sp={stopPos}/>)}
               {DIRECTED_EDGES.map(e => (
                 <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} sp={stopPos}/>
               ))}
 
-              {/* Waiting passenger indicators */}
+              {/* Waiting passenger icons */}
               {waitingPax.map((p, i) => {
                 const sp2 = stopPos[p.stopId];
                 return <text key={p.id}
@@ -574,25 +649,18 @@ export default function App() {
               {vs.map(s => {
                 const v = vehicles.find(x => x.id === s.id);
                 if (!v || !v.active) return null;
-                const px=s.pos.x, py=s.pos.y;
-                const isParked     = s.wait > 0;
-                const isStopped    = s.obstacleType==="stop" && s.obstacleTimer>0;
-                const isSlowed     = s.obstacleType==="slow" && s.obstacleTimer>0;
-                const isDispatched = !!s.pickupStop;
-                const textCol      = isLight(v.color) ? "#111" : "#fff";
                 return (
                   <g key={v.id} style={{ cursor:"pointer" }}
                      onClick={() => setSel(v.id===sel ? null : v.id)}>
-                    {sel===v.id && <circle cx={px} cy={py} r={21} fill={v.color} fillOpacity={0.15}/>}
-                    {isDispatched && <circle cx={px} cy={py} r={15} fill="none" stroke="#a78bfa" strokeWidth={2} strokeDasharray="3 2"/>}
-                    {isStopped    && <circle cx={px} cy={py} r={14} fill="none" stroke="#ef4444" strokeWidth={1.5} opacity={0.7}/>}
-                    {isSlowed     && <circle cx={px} cy={py} r={14} fill="none" stroke="#f59e0b" strokeWidth={1.5} opacity={0.7}/>}
-                    <circle cx={px} cy={py} r={11}
-                      fill={v.color} stroke={sel===v.id?"#fff":"#0a0f1e"}
-                      strokeWidth={sel===v.id?2.5:1.5} opacity={isParked?0.72:1}/>
-                    <text x={px} y={py+1} textAnchor="middle" dominantBaseline="middle"
-                      fill={textCol} fontSize={5.5} fontWeight="700"
-                      style={{ userSelect:"none", pointerEvents:"none" }}>{v.name}</text>
+                    <VehicleCircle
+                      px={s.pos.x} py={s.pos.y} v={v}
+                      selected={sel===v.id}
+                      isParked={s.wait > 0}
+                      isStopped={s.obstacleType==="stop" && s.obstacleTimer>0}
+                      isSlowed={s.obstacleType==="slow"  && s.obstacleTimer>0}
+                      isDispatched={!!s.pickupStop}
+                      paxCount={s.paxCount || 0}
+                    />
                   </g>
                 );
               })}
@@ -602,15 +670,28 @@ export default function App() {
             <div style={{ position:"absolute", top:8, left:8,
                           background:"rgba(17,24,39,0.93)", borderRadius:6,
                           padding:"8px 10px", border:"1px solid #1f2937", fontSize:10 }}>
-              <div style={{ color:"#38bdf8", fontWeight:700, marginBottom:5 }}>キャラクター</div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:6, maxWidth:140 }}>
-                {VEHICLE_DEFS.map(d => (
-                  <div key={d.id} style={{ display:"flex", alignItems:"center", gap:3 }}>
-                    <div style={{ width:10, height:10, borderRadius:"50%", background:d.color,
-                                  border: isLight(d.color) ? "1px solid #555" : "none" }}/>
-                    <span style={{ color:"#94a3b8", fontSize:9 }}>{d.name}</span>
-                  </div>
-                ))}
+              <div style={{ color:"#38bdf8", fontWeight:700, marginBottom:5 }}>キャラクター（左色/右色）</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:3, marginBottom:6 }}>
+                {VEHICLE_DEFS.map(d => {
+                  const twoTone = d.color !== d.color2;
+                  return (
+                    <div key={d.id} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      <svg width={16} height={16}>
+                        {twoTone ? (
+                          <>
+                            <path d="M 8 8 L 8 1 A 7 7 0 0 0 8 15 Z" fill={d.color}/>
+                            <path d="M 8 8 L 8 1 A 7 7 0 0 1 8 15 Z" fill={d.color2}/>
+                            <circle cx={8} cy={8} r={7} fill="none" stroke="#333" strokeWidth={0.5}/>
+                          </>
+                        ) : (
+                          <circle cx={8} cy={8} r={7} fill={d.color}
+                            stroke={isLight(d.color)?"#555":"none"} strokeWidth={0.5}/>
+                        )}
+                      </svg>
+                      <span style={{ color:"#94a3b8", fontSize:9 }}>{d.name}</span>
+                    </div>
+                  );
+                })}
               </div>
               <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
                 <div style={{ width:12,height:12,borderRadius:"50%",border:"1.5px solid #ef4444",background:"transparent"}}/>
@@ -623,6 +704,13 @@ export default function App() {
               <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:4 }}>
                 <div style={{ width:12,height:12,borderRadius:"50%",border:"2px dashed #a78bfa",background:"transparent"}}/>
                 <span style={{ color:"#94a3b8" }}>配車中</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:4 }}>
+                <svg width={28} height={8}>
+                  {[0,1,2].map(i => <circle key={i} cx={4+i*10} cy={4} r={2.5}
+                    fill={i===0?"#fbbf24":"rgba(255,255,255,0.25)"} stroke="rgba(0,0,0,0.3)" strokeWidth={0.5}/>)}
+                </svg>
+                <span style={{ color:"#94a3b8" }}>乗客数/定員</span>
               </div>
               <div style={{ borderTop:"1px solid #1f2937", paddingTop:4, color:"#475569", fontSize:9 }}>
                 ⠿ 地点はドラッグで移動
@@ -682,6 +770,9 @@ export default function App() {
                 const cur   = stopsMap[route[ri]]?.name ?? "—";
                 const isDis = !!s?.pickupStop;
                 const isObs = s?.obstacleType && s.obstacleTimer > 0;
+                const pax   = s?.paxCount || 0;
+                const cap   = v.capacity || 2;
+                const twoTone = v.color !== (v.color2 || v.color);
                 return (
                   <div key={v.id} onClick={() => setSel(v.id===sel ? null : v.id)} style={{
                     padding:"7px 8px", borderRadius:6, cursor:"pointer", marginBottom:4,
@@ -689,9 +780,16 @@ export default function App() {
                     border:`1px solid ${sel===v.id?v.color:"#1f2937"}`
                   }}>
                     <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:2 }}>
-                      <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0,
-                                    background:v.active?v.color:"#4b5563",
-                                    border: isLight(v.color) ? "1px solid #555" : "none" }}/>
+                      <svg width={12} height={12} style={{ flexShrink:0 }}>
+                        {twoTone ? (
+                          <>
+                            <path d="M 6 6 L 6 0 A 6 6 0 0 0 6 12 Z" fill={v.active?v.color:"#4b5563"}/>
+                            <path d="M 6 6 L 6 0 A 6 6 0 0 1 6 12 Z" fill={v.active?(v.color2||v.color):"#4b5563"}/>
+                          </>
+                        ) : (
+                          <circle cx={6} cy={6} r={6} fill={v.active?v.color:"#4b5563"}/>
+                        )}
+                      </svg>
                       <span style={{ fontSize:11, fontWeight:600, flex:1, overflow:"hidden",
                                      textOverflow:"ellipsis", whiteSpace:"nowrap",
                                      color:v.active?"#e2e8f0":"#4b5563" }}>{v.name}</span>
@@ -701,7 +799,19 @@ export default function App() {
                         {s.obstacleType==="stop"?"停止":"減速"}</span>}
                     </div>
                     <div style={{ fontSize:9, color:v.active?MC[v.mode]:"#374151" }}>{ML[v.mode]}</div>
-                    {v.active && <div style={{ fontSize:9, color:"#6b7280", marginTop:2 }}>📍 {cur}</div>}
+                    {v.active && (
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:2 }}>
+                        <div style={{ fontSize:9, color:"#6b7280" }}>📍 {cur}</div>
+                        {/* Passenger dots */}
+                        <div style={{ display:"flex", gap:2 }}>
+                          {Array.from({length:cap}).map((_,i) => (
+                            <div key={i} style={{ width:5, height:5, borderRadius:"50%",
+                              background:i<pax?"#fbbf24":"#1f2937",
+                              border:"1px solid #374151" }}/>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -788,24 +898,70 @@ export default function App() {
                 <input type="range" min={0.2} max={2} step={0.2} value={editDef.speed}
                   onChange={e => updE("speed", +e.target.value)} style={{ width:"100%" }}/>
               </div>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <div>
-                  <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:4 }}>カラー</label>
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:6, maxWidth:220 }}>
-                    {CHAR_COLORS.map((c, i) => (
-                      <button key={c+i} onClick={() => updE("color", c)} style={{
-                        width:22, height:22, background:c, borderRadius:4, cursor:"pointer",
-                        border: editDef.color===c ? "2.5px solid #fff" : "2px solid transparent"
-                      }}/>
-                    ))}
+              <div style={{ marginBottom:10 }}>
+                <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:3 }}>
+                  定員（最大乗客数）: {editDef.capacity || 2}人
+                </label>
+                <input type="range" min={1} max={3} step={1} value={editDef.capacity || 2}
+                  onChange={e => updE("capacity", +e.target.value)} style={{ width:"100%" }}/>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:"#475569", marginTop:2 }}>
+                  <span>1人</span><span>2人</span><span>3人</span>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:10, alignItems:"flex-start", justifyContent:"space-between" }}>
+                <div style={{ flex:1 }}>
+                  <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:4 }}>カラー（左 / 右）</label>
+                  <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:6 }}>
+                    <div>
+                      <div style={{ fontSize:9, color:"#475569", marginBottom:3 }}>左色</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginBottom:4, maxWidth:120 }}>
+                        {CHAR_COLORS.map((c, i) => (
+                          <button key={i} onClick={() => updE("color", c)} style={{
+                            width:18, height:18, background:c, borderRadius:3, cursor:"pointer",
+                            border: editDef.color===c ? "2px solid #fff" : "2px solid transparent",
+                            outline: isLight(c) ? "1px solid #555" : "none"
+                          }}/>
+                        ))}
+                      </div>
+                      <input type="color" value={editDef.color} onChange={e => updE("color", e.target.value)}
+                        style={{ width:36, height:24, padding:2, background:"#0a0f1e",
+                                 border:"1px solid #1f2937", borderRadius:3, cursor:"pointer" }}/>
+                    </div>
+                    <div style={{ fontSize:16, color:"#475569", alignSelf:"center" }}>→</div>
+                    <div>
+                      <div style={{ fontSize:9, color:"#475569", marginBottom:3 }}>右色</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginBottom:4, maxWidth:120 }}>
+                        {CHAR_COLORS2.map((c, i) => (
+                          <button key={i} onClick={() => updE("color2", c)} style={{
+                            width:18, height:18, background:c, borderRadius:3, cursor:"pointer",
+                            border: editDef.color2===c ? "2px solid #fff" : "2px solid transparent",
+                            outline: isLight(c) ? "1px solid #555" : "none"
+                          }}/>
+                        ))}
+                      </div>
+                      <input type="color" value={editDef.color2 || editDef.color}
+                        onChange={e => updE("color2", e.target.value)}
+                        style={{ width:36, height:24, padding:2, background:"#0a0f1e",
+                                 border:"1px solid #1f2937", borderRadius:3, cursor:"pointer" }}/>
+                    </div>
+                    {/* Preview */}
+                    <svg width={28} height={28} style={{ flexShrink:0 }}>
+                      {editDef.color !== (editDef.color2 || editDef.color) ? (
+                        <>
+                          <path d="M 14 14 L 14 3 A 11 11 0 0 0 14 25 Z" fill={editDef.color}/>
+                          <path d="M 14 14 L 14 3 A 11 11 0 0 1 14 25 Z" fill={editDef.color2||editDef.color}/>
+                          <circle cx={14} cy={14} r={11} fill="none" stroke="#555" strokeWidth={0.5}/>
+                        </>
+                      ) : (
+                        <circle cx={14} cy={14} r={11} fill={editDef.color}
+                          stroke={isLight(editDef.color)?"#555":"none"} strokeWidth={0.5}/>
+                      )}
+                    </svg>
                   </div>
-                  <input type="color" value={editDef.color} onChange={e => updE("color", e.target.value)}
-                    style={{ width:40, height:28, padding:2, background:"#0a0f1e",
-                             border:"1px solid #1f2937", borderRadius:4, cursor:"pointer" }}/>
                 </div>
                 {localDefs.length > 1 && (
                   <button onClick={() => removeVehicle(editDef.id)} style={{
-                    padding:"6px 12px", borderRadius:4, border:"1px solid #7f1d1d",
+                    padding:"6px 10px", borderRadius:4, border:"1px solid #7f1d1d",
                     background:"transparent", color:"#ef4444", cursor:"pointer", fontSize:11, fontWeight:600
                   }}>× 削除</button>
                 )}
@@ -896,27 +1052,27 @@ export default function App() {
             { icon:"🗺", title:"マップ", items:[
               "地点（A/B/C/D）はドラッグで自由に移動できます",
               "車両をクリックすると右パネルで選択状態になります",
-              "右パネルから停止・稼働の切り替えと経路編集が可能です",
+              "右パネルから停止・稼働の切り替えと経路編集・手動配車が可能です",
+            ]},
+            { icon:"🎨", title:"2色カラー", items:[
+              "各キャラクターは左半分・右半分の2色で表示されます",
+              "車両上部の小さなドットで定員と現在の乗客数がわかります（黄=乗客）",
             ]},
             { icon:"🚶", title:"歩行者・障害物", items:[
-              "「密度」スライダーで障害物が発生する頻度を調整（0〜100%）",
-              "「最大停止時間」スライダーで停止・減速の最大継続時間を設定（〜10秒）",
+              "「密度」で障害物が発生する頻度を調整（0〜100%）",
+              "「最大停止時間」で停止・減速の最大継続時間を設定（〜10秒）",
               "赤リング=停止中 / 黄リング=減速中",
             ]},
             { icon:"🧍", title:"乗客・配車", items:[
               "自動で乗客が発生し（ホテルCが多め）、最近傍の空き車両が自動配車されます",
-              "「自動配車」チェックで自動配車ON/OFFを切り替えできます",
+              "定員に達した車両は自動配車されません",
               "手動で乗客を発生させたり、選択した車両を指定停留所へ配車できます",
-              "紫破線リング=配車中の車両",
+              "紫破線リング=配車中",
             ]},
             { icon:"⚙️", title:"設定 ＞ 車両", items:[
-              "「＋」ボタンで車両を追加、「× 削除」で削除できます",
-              "経路：地点ボタンを押して経由地を追加、一方通行に沿って自動補間",
-              "モード：ループ = 繰り返し走行 / オンデマンド = 終点で長めに停車",
-              "カラーパレットからキャラクターカラーを選択、または自由入力も可能",
-            ]},
-            { icon:"📍", title:"設定 ＞ 地点", items:[
-              "各地点の名前と種別（ステーション / ゲート / 停留所 など）を変更できます",
+              "「定員」スライダーで1台あたりの最大乗客数を1〜3人で設定できます",
+              "「＋」ボタンで車両追加、「× 削除」で削除できます",
+              "左色・右色でキャラクターの2色を個別設定、プレビューで確認できます",
             ]},
             { icon:"💾", title:"保存", items:[
               "「保存して適用」で変更が反映され、localStorageに保存されます",
