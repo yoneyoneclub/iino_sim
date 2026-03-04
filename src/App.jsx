@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── localStorage helper ───────────────────────────────────────────────────────
-const LS_VER = "v3-charnames"; // bump this to reset all saved data
+const LS_VER = "v4-cap3"; // bump this to reset all saved data
 
 function loadLS(key, fallback) {
   try {
@@ -102,16 +102,16 @@ const CHAR_NAMES   = ["kiha","subi","teyu","mete","kito","roha","hemi","colu","n
 
 // ─── Vehicle definitions ──────────────────────────────────────────────────────
 const VEHICLE_DEFS = [
-  { id:1,  name:"kiha", mode:"loop", waypoints:["A","B","A"], color:"#FFE033", color2:"#FFE033", capacity:2, speed:0.8, active:true },
-  { id:2,  name:"subi", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#3377EE", capacity:2, speed:0.6, active:true },
-  { id:3,  name:"teyu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#F0F0F0", capacity:2, speed:0.7, active:true },
-  { id:4,  name:"mete", mode:"loop", waypoints:["A","B","A"], color:"#FF8833", color2:"#FF8833", capacity:2, speed:0.9, active:true },
-  { id:5,  name:"kito", mode:"loop", waypoints:["A","B","A"], color:"#FF5555", color2:"#FF5555", capacity:2, speed:0.8, active:true },
-  { id:6,  name:"roha", mode:"loop", waypoints:["A","D","A"], color:"#55AAEE", color2:"#AA55EE", capacity:2, speed:0.8, active:true },
-  { id:7,  name:"hemi", mode:"loop", waypoints:["A","C","A"], color:"#33CC77", color2:"#AA55EE", capacity:2, speed:0.8, active:true },
-  { id:8,  name:"colu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#9933CC", capacity:2, speed:0.7, active:true },
-  { id:9,  name:"nere", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#FFE033", capacity:2, speed:0.6, active:true },
-  { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#33CC77", capacity:2, speed:0.9, active:true },
+  { id:1,  name:"kiha", mode:"loop", waypoints:["A","B","A"], color:"#FFE033", color2:"#FFE033", capacity:3, speed:0.8, active:true },
+  { id:2,  name:"subi", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#3377EE", capacity:3, speed:0.6, active:true },
+  { id:3,  name:"teyu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#F0F0F0", capacity:3, speed:0.7, active:true },
+  { id:4,  name:"mete", mode:"loop", waypoints:["A","B","A"], color:"#FF8833", color2:"#FF8833", capacity:3, speed:0.9, active:true },
+  { id:5,  name:"kito", mode:"loop", waypoints:["A","B","A"], color:"#FF5555", color2:"#FF5555", capacity:3, speed:0.8, active:true },
+  { id:6,  name:"roha", mode:"loop", waypoints:["A","D","A"], color:"#55AAEE", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:7,  name:"hemi", mode:"loop", waypoints:["A","C","A"], color:"#33CC77", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:8,  name:"colu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#9933CC", capacity:3, speed:0.7, active:true },
+  { id:9,  name:"nere", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#FFE033", capacity:3, speed:0.6, active:true },
+  { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#33CC77", capacity:3, speed:0.9, active:true },
 ];
 
 function buildVehicles(defs, adj) {
@@ -409,7 +409,9 @@ export default function App() {
         if (nri >= route.length) {
           if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true, vid: s.id });
           if (!s.pickupStop && s.paxCount > 0) pickupEvents.push({ loopDone: true, vid: s.id });
-          const base = { ...s, ri:0, prog:0, customRoute:null, pickupStop:null, paxCount:0, obstacleTimer, obstacleType };
+          // park at start of the loop's first segment to avoid teleport on restart
+          const loopPark = v.route.length >= 2 ? lanePos(v.route[0], v.route[1], 0, sp) : null;
+          const base = { ...s, ri:0, prog:0, park:loopPark, customRoute:null, pickupStop:null, paxCount:0, obstacleTimer, obstacleType };
           if (v.mode === "loop")     return { ...base, wait:0.4 };
           if (v.mode === "ondemand") return { ...base, wait:3 };
           return { ...base, wait:1 };
@@ -448,10 +450,12 @@ export default function App() {
           } else {
             newLogs.push(`${v.name} → ${stopsMapR.current[toId]?.name ?? toId}`);
           }
-          const parkLane = lanePos(fromId, toId, 1.0, sp);
-          const dx=sp[toId].x-sp[fromId].x, dy=sp[toId].y-sp[fromId].y;
-          const len=Math.hypot(dx,dy)||1;
-          const park = { x:parkLane.x+(dx/len)*18, y:parkLane.y+(dy/len)*18 };
+          // park at the start of the NEXT segment's lane → vehicle glides there during wait,
+          // so when movement resumes it starts at exactly the right lane position (no jump)
+          const nextSeg = nri + 1;
+          const park = nextSeg < route.length
+            ? lanePos(toId, route[nextSeg], 0, sp)
+            : lanePos(fromId, toId, 1.0, sp);
           const waitTime = (s.pickupStop && toId === s.pickupStop) ? 2.5 : 0.4;
           const newPaxCount = (s.pickupStop && toId === s.pickupStop)
             ? s.paxCount + dispatchPickupCount
@@ -562,7 +566,7 @@ export default function App() {
     const idx = (nid - 1) % CHAR_NAMES.length;
     setLocalDefs(p => [...p, {
       id:nid, name:CHAR_NAMES[idx], mode:"loop", waypoints:["A","B","A"],
-      color:CHAR_COLORS[idx], color2:CHAR_COLORS2[idx], capacity:2, speed:0.8, active:true,
+      color:CHAR_COLORS[idx], color2:CHAR_COLORS2[idx], capacity:3, speed:0.8, active:true,
     }]);
     setEditId(nid);
   };
@@ -660,7 +664,7 @@ export default function App() {
                     display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
         <span style={{ fontSize:13, fontWeight:700, color:"#38bdf8" }}>🚗 iino Simulator</span>
         <div style={{ display:"flex", gap:2, marginLeft:"auto" }}>
-          {[["map","マップ"],["cfg","設定"],["log","ログ"],["help","?"]].map(([t,l]) => (
+          {[["map","マップ"],["cfg","設定"],["help","?"]].map(([t,l]) => (
             <button key={t} onClick={() => handleTabChange(t)} style={{
               padding:"4px 10px", borderRadius:4, border:"none", cursor:"pointer", fontSize:11,
               background:tab===t?"#38bdf8":"#1f2937", color:tab===t?"#0a0f1e":"#94a3b8", fontWeight:600
@@ -972,9 +976,9 @@ export default function App() {
               </div>
               <div style={{ marginBottom:10 }}>
                 <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:3 }}>
-                  定員（最大乗客数）: {editDef.capacity || 2}人
+                  定員（最大乗客数）: {editDef.capacity || 3}人
                 </label>
-                <input type="range" min={1} max={3} step={1} value={editDef.capacity || 2}
+                <input type="range" min={1} max={3} step={1} value={editDef.capacity || 3}
                   onChange={e => updE("capacity", +e.target.value)} style={{ width:"100%" }}/>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:"#475569", marginTop:2 }}>
                   <span>1人</span><span>2人</span><span>3人</span>
@@ -1042,9 +1046,23 @@ export default function App() {
 
             <div style={{ background:"#111827", borderRadius:8, padding:12, marginBottom:10 }}>
               <label style={{ fontSize:10, color:"#64748b", display:"block", marginBottom:4 }}>経由地（一方通行に沿って自動補間）</label>
-              <div style={{ fontSize:9, color:"#38bdf8", marginBottom:8, lineHeight:1.6 }}>
-                展開後: {expandRoute(editDef.waypoints, adjFromEdges(localEdges)).join(" → ") || "（経路なし）"}
-              </div>
+              {(() => {
+                const localAdj = adjFromEdges(localEdges);
+                const expanded = expandRoute(editDef.waypoints, localAdj);
+                const expandedSet = new Set(expanded);
+                const unreachable = editDef.waypoints.filter(w => !expandedSet.has(w));
+                return (<>
+                  <div style={{ fontSize:9, color:"#38bdf8", marginBottom: unreachable.length ? 4 : 8, lineHeight:1.6 }}>
+                    展開後: {expanded.join(" → ") || "（経路なし）"}
+                  </div>
+                  {unreachable.length > 0 && (
+                    <div style={{ fontSize:9, color:"#ef4444", marginBottom:8,
+                                  background:"rgba(239,68,68,0.1)", padding:"4px 6px", borderRadius:3 }}>
+                      ⚠️ 到達不能: {unreachable.join(", ")} — 「地点」タブでエッジを追加してください
+                    </div>
+                  )}
+                </>);
+              })()}
               <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8, minHeight:32 }}>
                 {editDef.waypoints.map((sid, i) => (
                   <div key={i} style={{ display:"flex", alignItems:"center", gap:2,
@@ -1172,20 +1190,6 @@ export default function App() {
             width:"100%", padding:"10px", background:"#38bdf8", color:"#0a0f1e",
             border:"none", borderRadius:6, cursor:"pointer", fontWeight:700, fontSize:13
           }}>💾 保存して適用</button>
-        </div>
-      )}
-
-      {/* ── Log tab ── */}
-      {tab === "log" && (
-        <div style={{ flex:1, padding:12, overflow:"auto" }}>
-          <div style={{ fontSize:11, color:"#475569", marginBottom:8 }}>移動・イベントログ</div>
-          {logs.map((l, i) => (
-            <div key={i} style={{ fontSize:11, color:"#94a3b8", padding:"3px 0", borderBottom:"1px solid #1f2937" }}>
-              <span style={{ color:"#374151", marginRight:8 }}>{new Date(l.t).toLocaleTimeString()}</span>
-              {l.m}
-            </div>
-          ))}
-          {!logs.length && <div style={{ color:"#374151", fontSize:11 }}>まだログなし</div>}
         </div>
       )}
 
