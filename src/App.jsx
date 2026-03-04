@@ -233,6 +233,20 @@ function VehicleCircle({ px, py, v, selected, isParked, isStopped, isSlowed, isD
   );
 }
 
+// ─── SliderRow (outside App to prevent remount on every render) ───────────────
+const SliderRow = ({ label, value, min, max, step, unit, onChange }) => (
+  <div style={{ marginBottom:7 }}>
+    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+      <span style={{ color:"#94a3b8", fontSize:10 }}>{label}</span>
+      <span style={{ color:"#e2e8f0", fontSize:10 }}>
+        {typeof value==="number"&&value%1!==0 ? value.toFixed(1) : value}{unit}
+      </span>
+    </div>
+    <input type="range" min={min} max={max} step={step} value={value}
+      onChange={e => onChange(+e.target.value)} style={{ width:"100%", accentColor:"#38bdf8" }}/>
+  </div>
+);
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [defs,          setDefs]          = useState(() => loadLS("iino_defs", VEHICLE_DEFS));
@@ -346,7 +360,15 @@ export default function App() {
           const curStop = route[Math.min(s.ri, route.length-1)];
           const toPickup = shortestPath(curStop, newPax.stopId) || [curStop, newPax.stopId];
           const toEnd = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1]) || [newPax.stopId];
-          return { ...s, customRoute:[...toPickup, ...toEnd.slice(1)], pickupStop:newPax.stopId, ri:0, prog:0 };
+          const fullRoute = [...toPickup, ...toEnd.slice(1)];
+          if (fullRoute.length < 2) {
+            // Vehicle already at pickup stop (and it's the route endpoint) → instant boarding
+            pickupEvents.push({ stopId: newPax.stopId, done: false, vid: s.id });
+            pickupEvents.push({ stopId: newPax.stopId, done: true,  vid: s.id });
+            newLogs.push(`🧍→🚗 ${stopsMapR.current[newPax.stopId]?.name || newPax.stopId}で即時乗車`);
+            return { ...s, paxCount: s.paxCount + 1 };
+          }
+          return { ...s, customRoute: fullRoute, pickupStop: newPax.stopId, ri: 0, prog: 0 };
         }
 
         if (route.length < 2) return s;
@@ -391,10 +413,22 @@ export default function App() {
         const np     = s.prog + adv;
 
         if (np >= 1) {
-          // Arrival at pickup stop
+          // Loop vehicle: pick up waiting passengers at this stop (when not on a dispatch mission)
+          let loopPickupCount = 0;
+          if (!s.pickupStop) {
+            const cap = v.capacity || 2;
+            const waitingHere = paxR.current.filter(x => x.stopId === toId && x.status === "waiting");
+            loopPickupCount = Math.min(waitingHere.length, cap - s.paxCount);
+            if (loopPickupCount > 0) {
+              pickupEvents.push({ stopId: toId, loopPickup: true, count: loopPickupCount, vid: s.id });
+            }
+          }
+          // Arrival logging
           if (s.pickupStop && toId === s.pickupStop) {
             pickupEvents.push({ stopId: s.pickupStop, done: false, vid: s.id });
             newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で乗車`);
+          } else if (loopPickupCount > 0) {
+            newLogs.push(`🚌 ${v.name} ${stopsMapR.current[toId]?.name ?? toId}で${loopPickupCount}人乗車`);
           } else {
             newLogs.push(`${v.name} → ${stopsMapR.current[toId]?.name ?? toId}`);
           }
@@ -403,7 +437,9 @@ export default function App() {
           const len=Math.hypot(dx,dy)||1;
           const park = { x:parkLane.x+(dx/len)*18, y:parkLane.y+(dy/len)*18 };
           const waitTime = (s.pickupStop && toId === s.pickupStop) ? 2.5 : 0.4;
-          const newPaxCount = (s.pickupStop && toId === s.pickupStop) ? s.paxCount + 1 : s.paxCount;
+          const newPaxCount = (s.pickupStop && toId === s.pickupStop)
+            ? s.paxCount + 1
+            : s.paxCount + loopPickupCount;
           return { ...s, ri:nri, prog:0, pos:lanePos(fromId,toId,1.0,sp), park, wait:waitTime,
             paxCount:newPaxCount, obstacleTimer, obstacleType };
         }
@@ -411,7 +447,7 @@ export default function App() {
       });
 
       pickupEvents.forEach(e => {
-        if (e.done) newLogs.push(`✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`);
+        if (!e.loopPickup && e.done) newLogs.push(`✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`);
       });
 
       vsR.current = nextVs;
@@ -422,8 +458,17 @@ export default function App() {
           let p = paxR.current.filter(x => x.status !== "done");
           if (newPax) p = [...p, newPax];
           pickupEvents.forEach(e => {
-            if (!e.done) p = p.map(x => x.stopId===e.stopId&&x.status==="waiting" ? {...x,status:"boarding"} : x);
-            else         p = p.map(x => x.stopId===e.stopId&&x.status==="boarding" ? {...x,status:"done"} : x);
+            if (e.loopPickup) {
+              let cnt = e.count;
+              p = p.map(x => {
+                if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) { cnt--; return { ...x, status: "done" }; }
+                return x;
+              });
+            } else if (!e.done) {
+              p = p.map(x => x.stopId===e.stopId&&x.status==="waiting" ? {...x,status:"boarding"} : x);
+            } else {
+              p = p.map(x => x.stopId===e.stopId&&x.status==="boarding" ? {...x,status:"done"} : x);
+            }
           });
           return p;
         })();
@@ -574,19 +619,6 @@ export default function App() {
   ];
   const waitingPax  = passengers.filter(p => p.status === "waiting");
   const boardingPax = passengers.filter(p => p.status === "boarding");
-
-  const SliderRow = ({ label, value, min, max, step, unit, onChange }) => (
-    <div style={{ marginBottom:7 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
-        <span style={{ color:"#94a3b8", fontSize:10 }}>{label}</span>
-        <span style={{ color:"#e2e8f0", fontSize:10 }}>
-          {typeof value==="number"&&value%1!==0 ? value.toFixed(1) : value}{unit}
-        </span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value}
-        onChange={e => onChange(+e.target.value)} style={{ width:"100%", accentColor:"#38bdf8" }}/>
-    </div>
-  );
 
   return (
     <div style={{ background:"#0a0f1e", height:"100vh", display:"flex", flexDirection:"column",
