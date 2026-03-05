@@ -494,8 +494,8 @@ export default function App() {
         if (!e.loopPickup && e.done) newLogs.push(`✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`);
       });
 
-      vsR.current = nextVs;
-      setVs(nextVs);
+      // nextPax を先に計算し、再配車ロジックで参照できるようにする
+      let finalVs = nextVs;
 
       if (newPax || pickupEvents.length) {
         const nextPax = (() => {
@@ -537,9 +537,64 @@ export default function App() {
           });
           return p;
         })();
+
+        // ── 再配車: 乗客が降りたとき、まだ待機中の人がいれば空き車両を向かわせる ──
+        if (autoDisR.current && pickupEvents.some(e => e.loopDone || e.done)) {
+          const waitingList = nextPax.filter(x => x.status === "waiting");
+          if (waitingList.length > 0) {
+            // すでに配車済みの停留所・車両はスキップ
+            const coveredStops = new Set(finalVs.filter(s => s.pickupStop).map(s => s.pickupStop));
+            const taken        = new Set(finalVs.filter(s => s.pickupStop).map(s => s.id));
+            for (const wp of waitingList) {
+              if (coveredStops.has(wp.stopId)) continue; // 既に車両が向かっている
+              let best = null, bestScore = Infinity;
+              for (const sv of finalVs) {
+                if (taken.has(sv.id)) continue;
+                const vv = vrRef.current.find(x => x.id === sv.id);
+                if (!vv || !vv.active) continue;
+                if (sv.paxCount >= (vv.capacity || 2)) continue;
+                const rt = sv.customRoute || vv.route;
+                const ni = Math.min(sv.ri + 1, rt.length - 1);
+                const pl = shortestPath(rt[ni], wp.stopId, adjR.current)?.length ?? 999;
+                const sc = ((1 - sv.prog) + Math.max(0, pl - 1)) / (vv.speed || 1);
+                if (sc < bestScore) { bestScore = sc; best = sv; }
+              }
+              if (best) {
+                coveredStops.add(wp.stopId);
+                taken.add(best.id);
+                const vv = vrRef.current.find(x => x.id === best.id);
+                const rt = best.customRoute || vv.route;
+                const nriD = best.ri + 1;
+                let fullRoute, rdProg;
+                if (best.prog > 0 && nriD < rt.length) {
+                  const toPickup = shortestPath(rt[nriD], wp.stopId, adjR.current) || [rt[nriD], wp.stopId];
+                  const toEnd    = shortestPath(wp.stopId, vv.waypoints[vv.waypoints.length-1], adjR.current) || [wp.stopId];
+                  fullRoute = [rt[best.ri], ...toPickup, ...toEnd.slice(1)];
+                  rdProg = best.prog;
+                } else {
+                  const toPickup = shortestPath(rt[best.ri], wp.stopId, adjR.current) || [rt[best.ri], wp.stopId];
+                  const toEnd    = shortestPath(wp.stopId, vv.waypoints[vv.waypoints.length-1], adjR.current) || [wp.stopId];
+                  fullRoute = [...toPickup, ...toEnd.slice(1)];
+                  rdProg = 0;
+                }
+                if (fullRoute.length >= 2) {
+                  finalVs = finalVs.map(s => s.id === best.id
+                    ? { ...s, customRoute: fullRoute, pickupStop: wp.stopId, ri: 0, prog: rdProg }
+                    : s
+                  );
+                  newLogs.push(`🔄 ${vv.name} → ${stopsMapR.current[wp.stopId]?.name || wp.stopId}へ再配車`);
+                }
+              }
+            }
+          }
+        }
+
         paxR.current = nextPax;
         setPassengers(nextPax);
       }
+
+      vsR.current = finalVs;
+      setVs(finalVs);
 
       if (newLogs.length)
         setLogs(prev => [...newLogs.map(m => ({ t:Date.now(), m })), ...prev].slice(0, 80));
@@ -683,7 +738,7 @@ export default function App() {
   };
 
   const spawnPax = stopId => {
-    const p = { id: paxIdCounter++, stopId, status:"waiting" };
+    const p = { id: paxIdCounter++, stopId, status:"waiting", spawnT: Date.now() };
     setPassengers(prev => [...prev.filter(x => x.status!=="done"), p]);
     setLogs(prev => [{ t:Date.now(), m:`🧍 ${stopsMap[stopId]?.name||stopId}に乗客（手動）` }, ...prev].slice(0,80));
     if (autoDis) {
