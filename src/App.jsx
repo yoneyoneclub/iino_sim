@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── localStorage helper ───────────────────────────────────────────────────────
-const LS_VER = "v4-cap3"; // bump this to reset all saved data
+const LS_VER = "v5-newroute"; // bump this to reset all saved data
 
 function loadLS(key, fallback) {
   try {
@@ -16,18 +16,37 @@ function loadLS(key, fallback) {
 }
 
 // ─── Road topology ────────────────────────────────────────────────────────────
+// ─── 停留所・路線（横向きレイアウト: 右=入口 / 左=ベース）─────────────────────────────
+// スケッチの縦ルートを90°回転して横配置
+//
+//  H(ベース) ── G(改札北) ── E(Info) ── C(C地点) ── B(展望台) ── A(入口)
+//                    ↕ loop           ↕ branch
+//                 F(改札)          D(南Info)
+//
 const STOPS_INIT = [
-  { id:"A", name:"Info",   type:"station" },
-  { id:"B", name:"改札",   type:"gate"    },
-  { id:"C", name:"ホテル", type:"stop"    },
-  { id:"D", name:"商業",   type:"stop"    },
+  { id:"A", name:"入口",   type:"station"  },
+  { id:"B", name:"展望台", type:"stop"     },
+  { id:"C", name:"C地点",  type:"stop"     },
+  { id:"D", name:"南Info", type:"stop"     },
+  { id:"E", name:"Info",   type:"stop"     },
+  { id:"F", name:"改札",   type:"gate"     },
+  { id:"G", name:"改札北", type:"gate"     },
+  { id:"H", name:"ベース", type:"terminal" },
 ];
 
 const INIT_EDGES = [
+  // 幹線（双方向）
   { from:"A", to:"B" }, { from:"B", to:"A" },
   { from:"B", to:"C" }, { from:"C", to:"B" },
-  { from:"B", to:"D" }, { from:"D", to:"B" },
+  { from:"C", to:"E" }, { from:"E", to:"C" },
+  { from:"E", to:"G" }, { from:"G", to:"E" },
+  { from:"G", to:"H" }, { from:"H", to:"G" },
+  // 南Info 支線（双方向）
   { from:"C", to:"D" }, { from:"D", to:"C" },
+  { from:"D", to:"E" }, { from:"E", to:"D" },
+  // 改札ループ（一方通行サーキット）
+  { from:"G", to:"F" },
+  { from:"F", to:"G" },
 ];
 
 function adjFromEdges(edges) {
@@ -69,10 +88,14 @@ function expandRoute(waypoints, adj) {
 const LANE = 14;
 
 const INIT_STOP_POS = {
-  A: { x:80,  y:160 },
-  B: { x:340, y:160 },
-  C: { x:600, y:160 },
-  D: { x:470, y:310 },
+  A: { x:660, y:215 },  // 入口（右端）
+  B: { x:540, y:215 },  // 展望台
+  C: { x:420, y:215 },  // C地点
+  D: { x:350, y:295 },  // 南Info（やや下）
+  E: { x:285, y:215 },  // Info
+  F: { x:165, y:285 },  // 改札（ループ南）
+  G: { x:165, y:145 },  // 改札北（ループ北）
+  H: { x: 55, y:215 },  // ベース（左端）
 };
 
 function laneVec(fromId, toId, sp) {
@@ -101,17 +124,19 @@ const CHAR_COLORS2 = ["#FFE033","#3377EE","#F0F0F0","#FF8833","#FF5555","#AA55EE
 const CHAR_NAMES   = ["kiha","subi","teyu","mete","kito","roha","hemi","colu","nere","yako"];
 
 // ─── Vehicle definitions ──────────────────────────────────────────────────────
+// デフォルトは全車両が改札ループ（G→F→G）を周回
+// 設定タブでwaypointsを変えれば他ルートも可
 const VEHICLE_DEFS = [
-  { id:1,  name:"kiha", mode:"loop", waypoints:["A","B","A"], color:"#FFE033", color2:"#FFE033", capacity:3, speed:0.8, active:true },
-  { id:2,  name:"subi", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#3377EE", capacity:3, speed:0.6, active:true },
-  { id:3,  name:"teyu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#F0F0F0", capacity:3, speed:0.7, active:true },
-  { id:4,  name:"mete", mode:"loop", waypoints:["A","B","A"], color:"#FF8833", color2:"#FF8833", capacity:3, speed:0.9, active:true },
-  { id:5,  name:"kito", mode:"loop", waypoints:["A","B","A"], color:"#FF5555", color2:"#FF5555", capacity:3, speed:0.8, active:true },
-  { id:6,  name:"roha", mode:"loop", waypoints:["A","D","A"], color:"#55AAEE", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
-  { id:7,  name:"hemi", mode:"loop", waypoints:["A","C","A"], color:"#33CC77", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
-  { id:8,  name:"colu", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#9933CC", capacity:3, speed:0.7, active:true },
-  { id:9,  name:"nere", mode:"loop", waypoints:["A","B","A"], color:"#3377EE", color2:"#FFE033", capacity:3, speed:0.6, active:true },
-  { id:10, name:"yako", mode:"loop", waypoints:["A","B","A"], color:"#F0F0F0", color2:"#33CC77", capacity:3, speed:0.9, active:true },
+  { id:1,  name:"kiha", mode:"loop", waypoints:["G","F","G"], color:"#FFE033", color2:"#FFE033", capacity:3, speed:0.8, active:true },
+  { id:2,  name:"subi", mode:"loop", waypoints:["G","F","G"], color:"#3377EE", color2:"#3377EE", capacity:3, speed:0.6, active:true },
+  { id:3,  name:"teyu", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#F0F0F0", capacity:3, speed:0.7, active:true },
+  { id:4,  name:"mete", mode:"loop", waypoints:["G","F","G"], color:"#FF8833", color2:"#FF8833", capacity:3, speed:0.9, active:true },
+  { id:5,  name:"kito", mode:"loop", waypoints:["G","F","G"], color:"#FF5555", color2:"#FF5555", capacity:3, speed:0.8, active:true },
+  { id:6,  name:"roha", mode:"loop", waypoints:["G","F","G"], color:"#55AAEE", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:7,  name:"hemi", mode:"loop", waypoints:["G","F","G"], color:"#33CC77", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:8,  name:"colu", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#9933CC", capacity:3, speed:0.7, active:true },
+  { id:9,  name:"nere", mode:"loop", waypoints:["G","F","G"], color:"#3377EE", color2:"#FFE033", capacity:3, speed:0.6, active:true },
+  { id:10, name:"yako", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#33CC77", capacity:3, speed:0.9, active:true },
 ];
 
 function buildVehicles(defs, adj) {
@@ -291,7 +316,7 @@ export default function App() {
   const [pedDensity,    setPedDensity]    = useState(0.3);
   const [maxStop,       setMaxStop]       = useState(5);
   const [passengers,    setPassengers]    = useState([]);
-  const [autoDis,       setAutoDis]       = useState(true);
+  const [autoDis,       setAutoDis]       = useState(false);
 
   const dragRef   = useRef(null);
   const lt        = useRef(null);
