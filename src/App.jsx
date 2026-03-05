@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── localStorage helper ───────────────────────────────────────────────────────
-const LS_VER = "v5-newroute"; // bump this to reset all saved data
+const LS_VER = "v6-sketch2"; // bump this to reset all saved data
 
 function loadLS(key, fallback) {
   try {
@@ -16,37 +16,40 @@ function loadLS(key, fallback) {
 }
 
 // ─── Road topology ────────────────────────────────────────────────────────────
-// ─── 停留所・路線（横向きレイアウト: 右=入口 / 左=ベース）─────────────────────────────
-// スケッチの縦ルートを90°回転して横配置
 //
-//  H(ベース) ── G(改札北) ── E(Info) ── C(C地点) ── B(展望台) ── A(入口)
-//                    ↕ loop           ↕ branch
-//                 F(改札)          D(南Info)
+//  [Y:倉庫] ─── [K:改札] ─── [J:改札北]
+//      |                          |
+//  [B]─[N:North棟]─────────[F:Info]─[E:South]─[C:C地点]─[V:ViewPoint]─[M:Museum]
+//
+// 改札ループ(K↔J)がメイン運行エリア。幹線(N↔F)はバイパス兼配車ルート。
 //
 const STOPS_INIT = [
-  { id:"A", name:"入口",   type:"station"  },
-  { id:"B", name:"展望台", type:"stop"     },
-  { id:"C", name:"C地点",  type:"stop"     },
-  { id:"D", name:"南Info", type:"stop"     },
-  { id:"E", name:"Info",   type:"stop"     },
-  { id:"F", name:"改札",   type:"gate"     },
-  { id:"G", name:"改札北", type:"gate"     },
-  { id:"H", name:"ベース", type:"terminal" },
+  { id:"B", name:"B",       type:"terminal" },
+  { id:"N", name:"North棟", type:"stop"     },
+  { id:"Y", name:"倉庫",    type:"terminal" },
+  { id:"K", name:"改札",    type:"gate"     },
+  { id:"J", name:"改札北",  type:"gate"     },
+  { id:"F", name:"Info",    type:"stop"     },
+  { id:"E", name:"South",   type:"stop"     },
+  { id:"C", name:"C地点",   type:"stop"     },
+  { id:"V", name:"展望台",  type:"stop"     },
+  { id:"M", name:"Museum",  type:"terminal" },
 ];
 
 const INIT_EDGES = [
   // 幹線（双方向）
-  { from:"A", to:"B" }, { from:"B", to:"A" },
-  { from:"B", to:"C" }, { from:"C", to:"B" },
-  { from:"C", to:"E" }, { from:"E", to:"C" },
-  { from:"E", to:"G" }, { from:"G", to:"E" },
-  { from:"G", to:"H" }, { from:"H", to:"G" },
-  // 南Info 支線（双方向）
-  { from:"C", to:"D" }, { from:"D", to:"C" },
-  { from:"D", to:"E" }, { from:"E", to:"D" },
-  // 改札ループ（一方通行サーキット）
-  { from:"G", to:"F" },
-  { from:"F", to:"G" },
+  { from:"B", to:"N" }, { from:"N", to:"B" },
+  { from:"N", to:"F" }, { from:"F", to:"N" },
+  { from:"F", to:"E" }, { from:"E", to:"F" },
+  { from:"E", to:"C" }, { from:"C", to:"E" },
+  { from:"C", to:"V" }, { from:"V", to:"C" },
+  { from:"V", to:"M" }, { from:"M", to:"V" },
+  // 倉庫（N からのデッドエンド支線）
+  { from:"N", to:"Y" }, { from:"Y", to:"N" },
+  // 改札ループ（N→改札→改札北→Info、双方向）
+  { from:"N", to:"K" }, { from:"K", to:"N" },
+  { from:"K", to:"J" }, { from:"J", to:"K" },
+  { from:"J", to:"F" }, { from:"F", to:"J" },
 ];
 
 function adjFromEdges(edges) {
@@ -88,14 +91,16 @@ function expandRoute(waypoints, adj) {
 const LANE = 14;
 
 const INIT_STOP_POS = {
-  A: { x:660, y:215 },  // 入口（右端）
-  B: { x:540, y:215 },  // 展望台
-  C: { x:420, y:215 },  // C地点
-  D: { x:350, y:295 },  // 南Info（やや下）
-  E: { x:285, y:215 },  // Info
-  F: { x:165, y:285 },  // 改札（ループ南）
-  G: { x:165, y:145 },  // 改札北（ループ北）
-  H: { x: 55, y:215 },  // ベース（左端）
+  B: { x: 45, y:275 },  // B ターミナル（左端）
+  N: { x:155, y:255 },  // North棟
+  Y: { x:115, y:140 },  // 倉庫（上部デッドエンド）
+  K: { x:235, y:140 },  // 改札（ループ西）
+  J: { x:345, y:145 },  // 改札北（ループ東）
+  F: { x:345, y:255 },  // Info（J の真下で幹線に接続）
+  E: { x:430, y:285 },  // South
+  C: { x:500, y:260 },  // C地点
+  V: { x:595, y:300 },  // 展望台
+  M: { x:668, y:325 },  // Museum（右端ターミナル）
 };
 
 function laneVec(fromId, toId, sp) {
@@ -124,19 +129,19 @@ const CHAR_COLORS2 = ["#FFE033","#3377EE","#F0F0F0","#FF8833","#FF5555","#AA55EE
 const CHAR_NAMES   = ["kiha","subi","teyu","mete","kito","roha","hemi","colu","nere","yako"];
 
 // ─── Vehicle definitions ──────────────────────────────────────────────────────
-// デフォルトは全車両が改札ループ（G→F→G）を周回
-// 設定タブでwaypointsを変えれば他ルートも可
+// デフォルトは全車両が改札ループ（K→J→K）を周回
+// 設定タブでwaypointsを変えれば配車ルートを変更可
 const VEHICLE_DEFS = [
-  { id:1,  name:"kiha", mode:"loop", waypoints:["G","F","G"], color:"#FFE033", color2:"#FFE033", capacity:3, speed:0.8, active:true },
-  { id:2,  name:"subi", mode:"loop", waypoints:["G","F","G"], color:"#3377EE", color2:"#3377EE", capacity:3, speed:0.6, active:true },
-  { id:3,  name:"teyu", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#F0F0F0", capacity:3, speed:0.7, active:true },
-  { id:4,  name:"mete", mode:"loop", waypoints:["G","F","G"], color:"#FF8833", color2:"#FF8833", capacity:3, speed:0.9, active:true },
-  { id:5,  name:"kito", mode:"loop", waypoints:["G","F","G"], color:"#FF5555", color2:"#FF5555", capacity:3, speed:0.8, active:true },
-  { id:6,  name:"roha", mode:"loop", waypoints:["G","F","G"], color:"#55AAEE", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
-  { id:7,  name:"hemi", mode:"loop", waypoints:["G","F","G"], color:"#33CC77", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
-  { id:8,  name:"colu", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#9933CC", capacity:3, speed:0.7, active:true },
-  { id:9,  name:"nere", mode:"loop", waypoints:["G","F","G"], color:"#3377EE", color2:"#FFE033", capacity:3, speed:0.6, active:true },
-  { id:10, name:"yako", mode:"loop", waypoints:["G","F","G"], color:"#F0F0F0", color2:"#33CC77", capacity:3, speed:0.9, active:true },
+  { id:1,  name:"kiha", mode:"loop", waypoints:["K","J","K"], color:"#FFE033", color2:"#FFE033", capacity:3, speed:0.8, active:true },
+  { id:2,  name:"subi", mode:"loop", waypoints:["K","J","K"], color:"#3377EE", color2:"#3377EE", capacity:3, speed:0.6, active:true },
+  { id:3,  name:"teyu", mode:"loop", waypoints:["K","J","K"], color:"#F0F0F0", color2:"#F0F0F0", capacity:3, speed:0.7, active:true },
+  { id:4,  name:"mete", mode:"loop", waypoints:["K","J","K"], color:"#FF8833", color2:"#FF8833", capacity:3, speed:0.9, active:true },
+  { id:5,  name:"kito", mode:"loop", waypoints:["K","J","K"], color:"#FF5555", color2:"#FF5555", capacity:3, speed:0.8, active:true },
+  { id:6,  name:"roha", mode:"loop", waypoints:["K","J","K"], color:"#55AAEE", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:7,  name:"hemi", mode:"loop", waypoints:["K","J","K"], color:"#33CC77", color2:"#AA55EE", capacity:3, speed:0.8, active:true },
+  { id:8,  name:"colu", mode:"loop", waypoints:["K","J","K"], color:"#F0F0F0", color2:"#9933CC", capacity:3, speed:0.7, active:true },
+  { id:9,  name:"nere", mode:"loop", waypoints:["K","J","K"], color:"#3377EE", color2:"#FFE033", capacity:3, speed:0.6, active:true },
+  { id:10, name:"yako", mode:"loop", waypoints:["K","J","K"], color:"#F0F0F0", color2:"#33CC77", capacity:3, speed:0.9, active:true },
 ];
 
 function buildVehicles(defs, adj) {
