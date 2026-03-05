@@ -305,7 +305,7 @@ export default function App() {
   const maxStopR  = useRef(maxStop);     maxStopR.current = maxStop;
   const autoDisR  = useRef(autoDis);     autoDisR.current = autoDis;
   const paxTimerR  = useRef(Math.random() * 8 + 6);
-  const waitStatsR = useRef({ sum: 0, count: 0 });
+  const waitStatsR = useRef({}); // { [stopId]: { sum, count } }
 
   // ── Animation loop ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -507,8 +507,10 @@ export default function App() {
               p = p.map(x => {
                 if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) {
                   cnt--;
-                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
-                  waitStatsR.current.count += 1;
+                  const ws = waitStatsR.current;
+                  if (!ws[x.stopId]) ws[x.stopId] = { sum: 0, count: 0 };
+                  ws[x.stopId].sum   += Date.now() - (x.spawnT || Date.now());
+                  ws[x.stopId].count += 1;
                   return { ...x, status: "boarding", vid: e.vid };
                 }
                 return x;
@@ -520,8 +522,10 @@ export default function App() {
               p = p.map(x => {
                 if (x.stopId===e.stopId && x.status==="waiting" && x.vid==null && cnt > 0) {
                   cnt--;
-                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
-                  waitStatsR.current.count += 1;
+                  const ws = waitStatsR.current;
+                  if (!ws[x.stopId]) ws[x.stopId] = { sum: 0, count: 0 };
+                  ws[x.stopId].sum   += Date.now() - (x.spawnT || Date.now());
+                  ws[x.stopId].count += 1;
                   return {...x, status:"boarding", vid:e.vid};
                 }
                 return x;
@@ -870,19 +874,42 @@ export default function App() {
                 </label>
               </div>
               <div style={{ fontSize:10, marginBottom:6 }}>
-                <span style={{ color:"#fbbf24" }}>待機: {waitingPax.length}人</span>
-                {boardingPax.length > 0 && <span style={{ color:"#4ade80", marginLeft:8 }}>乗車中: {boardingPax.length}人</span>}
-                <div style={{ color:"#94a3b8", marginTop:2 }}>
-                  平均待機:{" "}
-                  {waitStatsR.current.count > 0
-                    ? `${(waitStatsR.current.sum / waitStatsR.current.count / 1000).toFixed(0)}秒`
-                    : "—"}
-                  {waitStatsR.current.count > 0 && (
-                    <span style={{ color:"#475569", fontSize:9, marginLeft:4 }}>
-                      (n={waitStatsR.current.count})
-                    </span>
-                  )}
+                <div style={{ marginBottom:4 }}>
+                  <span style={{ color:"#fbbf24" }}>待機: {waitingPax.length}人</span>
+                  {boardingPax.length > 0 && <span style={{ color:"#4ade80", marginLeft:8 }}>乗車中: {boardingPax.length}人</span>}
                 </div>
+                {/* Per-stop average wait time table */}
+                {stopDefs.length > 0 && (
+                  <table style={{ borderCollapse:"collapse", width:"100%", fontSize:9 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ color:"#475569", textAlign:"left", paddingBottom:2, fontWeight:500 }}>停留所</th>
+                        <th style={{ color:"#475569", textAlign:"right", paddingBottom:2, fontWeight:500 }}>平均待機</th>
+                        <th style={{ color:"#475569", textAlign:"right", paddingBottom:2, fontWeight:500, paddingLeft:6 }}>件数</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stopDefs.map(s => {
+                        const st = waitStatsR.current[s.id];
+                        const avg = st && st.count > 0 ? (st.sum / st.count / 1000).toFixed(0) : null;
+                        return (
+                          <tr key={s.id}>
+                            <td style={{ color: SC[s.type] || "#94a3b8", paddingRight:4 }}>
+                              <span style={{ fontWeight:700 }}>{s.id}</span>
+                              <span style={{ color:"#475569", marginLeft:3 }}>{s.name}</span>
+                            </td>
+                            <td style={{ textAlign:"right", color: avg ? "#e2e8f0" : "#374151" }}>
+                              {avg ? `${avg}秒` : "—"}
+                            </td>
+                            <td style={{ textAlign:"right", color:"#475569", paddingLeft:6 }}>
+                              {st?.count ?? 0}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
               <div style={{ fontSize:9, color:"#475569", marginBottom:4 }}>手動で乗客発生:</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
