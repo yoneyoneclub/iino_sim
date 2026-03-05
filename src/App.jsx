@@ -305,7 +305,7 @@ export default function App() {
   const maxStopR  = useRef(maxStop);     maxStopR.current = maxStop;
   const autoDisR  = useRef(autoDis);     autoDisR.current = autoDis;
   const paxTimerR  = useRef(Math.random() * 8 + 6);
-  const waitStatsR = useRef({ sum: 0, count: 0 });
+  const waitStatsR = useRef({}); // { [stopId]: { sum, count } }
 
   // ── Animation loop ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -494,8 +494,8 @@ export default function App() {
         if (!e.loopPickup && e.done) newLogs.push(`✅ 配車完了: ${stopsMapR.current[e.stopId]?.name || e.stopId}`);
       });
 
-      vsR.current = nextVs;
-      setVs(nextVs);
+      // nextPax を先に計算し、再配車ロジックで参照できるようにする
+      let finalVs = nextVs;
 
       if (newPax || pickupEvents.length) {
         const nextPax = (() => {
@@ -507,8 +507,10 @@ export default function App() {
               p = p.map(x => {
                 if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) {
                   cnt--;
-                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
-                  waitStatsR.current.count += 1;
+                  const ws = waitStatsR.current;
+                  if (!ws[x.stopId]) ws[x.stopId] = { sum: 0, count: 0 };
+                  ws[x.stopId].sum   += Date.now() - (x.spawnT || Date.now());
+                  ws[x.stopId].count += 1;
                   return { ...x, status: "boarding", vid: e.vid };
                 }
                 return x;
@@ -520,8 +522,10 @@ export default function App() {
               p = p.map(x => {
                 if (x.stopId===e.stopId && x.status==="waiting" && x.vid==null && cnt > 0) {
                   cnt--;
-                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
-                  waitStatsR.current.count += 1;
+                  const ws = waitStatsR.current;
+                  if (!ws[x.stopId]) ws[x.stopId] = { sum: 0, count: 0 };
+                  ws[x.stopId].sum   += Date.now() - (x.spawnT || Date.now());
+                  ws[x.stopId].count += 1;
                   return {...x, status:"boarding", vid:e.vid};
                 }
                 return x;
@@ -533,9 +537,64 @@ export default function App() {
           });
           return p;
         })();
+
+        // ── 再配車: 乗客が降りたとき、まだ待機中の人がいれば空き車両を向かわせる ──
+        if (autoDisR.current && pickupEvents.some(e => e.loopDone || e.done)) {
+          const waitingList = nextPax.filter(x => x.status === "waiting");
+          if (waitingList.length > 0) {
+            // すでに配車済みの停留所・車両はスキップ
+            const coveredStops = new Set(finalVs.filter(s => s.pickupStop).map(s => s.pickupStop));
+            const taken        = new Set(finalVs.filter(s => s.pickupStop).map(s => s.id));
+            for (const wp of waitingList) {
+              if (coveredStops.has(wp.stopId)) continue; // 既に車両が向かっている
+              let best = null, bestScore = Infinity;
+              for (const sv of finalVs) {
+                if (taken.has(sv.id)) continue;
+                const vv = vrRef.current.find(x => x.id === sv.id);
+                if (!vv || !vv.active) continue;
+                if (sv.paxCount >= (vv.capacity || 2)) continue;
+                const rt = sv.customRoute || vv.route;
+                const ni = Math.min(sv.ri + 1, rt.length - 1);
+                const pl = shortestPath(rt[ni], wp.stopId, adjR.current)?.length ?? 999;
+                const sc = ((1 - sv.prog) + Math.max(0, pl - 1)) / (vv.speed || 1);
+                if (sc < bestScore) { bestScore = sc; best = sv; }
+              }
+              if (best) {
+                coveredStops.add(wp.stopId);
+                taken.add(best.id);
+                const vv = vrRef.current.find(x => x.id === best.id);
+                const rt = best.customRoute || vv.route;
+                const nriD = best.ri + 1;
+                let fullRoute, rdProg;
+                if (best.prog > 0 && nriD < rt.length) {
+                  const toPickup = shortestPath(rt[nriD], wp.stopId, adjR.current) || [rt[nriD], wp.stopId];
+                  const toEnd    = shortestPath(wp.stopId, vv.waypoints[vv.waypoints.length-1], adjR.current) || [wp.stopId];
+                  fullRoute = [rt[best.ri], ...toPickup, ...toEnd.slice(1)];
+                  rdProg = best.prog;
+                } else {
+                  const toPickup = shortestPath(rt[best.ri], wp.stopId, adjR.current) || [rt[best.ri], wp.stopId];
+                  const toEnd    = shortestPath(wp.stopId, vv.waypoints[vv.waypoints.length-1], adjR.current) || [wp.stopId];
+                  fullRoute = [...toPickup, ...toEnd.slice(1)];
+                  rdProg = 0;
+                }
+                if (fullRoute.length >= 2) {
+                  finalVs = finalVs.map(s => s.id === best.id
+                    ? { ...s, customRoute: fullRoute, pickupStop: wp.stopId, ri: 0, prog: rdProg }
+                    : s
+                  );
+                  newLogs.push(`🔄 ${vv.name} → ${stopsMapR.current[wp.stopId]?.name || wp.stopId}へ再配車`);
+                }
+              }
+            }
+          }
+        }
+
         paxR.current = nextPax;
         setPassengers(nextPax);
       }
+
+      vsR.current = finalVs;
+      setVs(finalVs);
 
       if (newLogs.length)
         setLogs(prev => [...newLogs.map(m => ({ t:Date.now(), m })), ...prev].slice(0, 80));
@@ -679,7 +738,7 @@ export default function App() {
   };
 
   const spawnPax = stopId => {
-    const p = { id: paxIdCounter++, stopId, status:"waiting" };
+    const p = { id: paxIdCounter++, stopId, status:"waiting", spawnT: Date.now() };
     setPassengers(prev => [...prev.filter(x => x.status!=="done"), p]);
     setLogs(prev => [{ t:Date.now(), m:`🧍 ${stopsMap[stopId]?.name||stopId}に乗客（手動）` }, ...prev].slice(0,80));
     if (autoDis) {
@@ -870,19 +929,42 @@ export default function App() {
                 </label>
               </div>
               <div style={{ fontSize:10, marginBottom:6 }}>
-                <span style={{ color:"#fbbf24" }}>待機: {waitingPax.length}人</span>
-                {boardingPax.length > 0 && <span style={{ color:"#4ade80", marginLeft:8 }}>乗車中: {boardingPax.length}人</span>}
-                <div style={{ color:"#94a3b8", marginTop:2 }}>
-                  平均待機:{" "}
-                  {waitStatsR.current.count > 0
-                    ? `${(waitStatsR.current.sum / waitStatsR.current.count / 1000).toFixed(0)}秒`
-                    : "—"}
-                  {waitStatsR.current.count > 0 && (
-                    <span style={{ color:"#475569", fontSize:9, marginLeft:4 }}>
-                      (n={waitStatsR.current.count})
-                    </span>
-                  )}
+                <div style={{ marginBottom:4 }}>
+                  <span style={{ color:"#fbbf24" }}>待機: {waitingPax.length}人</span>
+                  {boardingPax.length > 0 && <span style={{ color:"#4ade80", marginLeft:8 }}>乗車中: {boardingPax.length}人</span>}
                 </div>
+                {/* Per-stop average wait time table */}
+                {stopDefs.length > 0 && (
+                  <table style={{ borderCollapse:"collapse", width:"100%", fontSize:9 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ color:"#475569", textAlign:"left", paddingBottom:2, fontWeight:500 }}>停留所</th>
+                        <th style={{ color:"#475569", textAlign:"right", paddingBottom:2, fontWeight:500 }}>平均待機</th>
+                        <th style={{ color:"#475569", textAlign:"right", paddingBottom:2, fontWeight:500, paddingLeft:6 }}>件数</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stopDefs.map(s => {
+                        const st = waitStatsR.current[s.id];
+                        const avg = st && st.count > 0 ? (st.sum / st.count / 1000).toFixed(0) : null;
+                        return (
+                          <tr key={s.id}>
+                            <td style={{ color: SC[s.type] || "#94a3b8", paddingRight:4 }}>
+                              <span style={{ fontWeight:700 }}>{s.id}</span>
+                              <span style={{ color:"#475569", marginLeft:3 }}>{s.name}</span>
+                            </td>
+                            <td style={{ textAlign:"right", color: avg ? "#e2e8f0" : "#374151" }}>
+                              {avg ? `${avg}秒` : "—"}
+                            </td>
+                            <td style={{ textAlign:"right", color:"#475569", paddingLeft:6 }}>
+                              {st?.count ?? 0}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
               <div style={{ fontSize:9, color:"#475569", marginBottom:4 }}>手動で乗客発生:</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
