@@ -418,16 +418,20 @@ export default function App() {
         // Wait at stop
         if (s.wait > 0) {
           const alpha = Math.min(1, dt * 5);
-          const tx = s.park ? s.park.x : s.pos.x;
-          const ty = s.park ? s.park.y : s.pos.y;
+          // Recompute target from current stop positions every frame so dragging a stop doesn't freeze vehicles
+          const nsiW = s.ri + 1;
+          const tgt = nsiW < route.length
+            ? lanePos(route[s.ri], route[nsiW], 0, sp)
+            : (s.park ?? s.pos);
           return { ...s, wait: Math.max(0, s.wait - dt), obstacleTimer, obstacleType,
-            pos: { x: s.pos.x+(tx-s.pos.x)*alpha, y: s.pos.y+(ty-s.pos.y)*alpha } };
+            pos: { x: s.pos.x+(tgt.x-s.pos.x)*alpha, y: s.pos.y+(tgt.y-s.pos.y)*alpha } };
         }
 
         const nri = s.ri + 1;
         if (nri >= route.length) {
-          if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true, vid: s.id });
-          if (!s.pickupStop && s.paxCount > 0) pickupEvents.push({ loopDone: true, vid: s.id });
+          const dropoffStop = route[route.length - 1];
+          if (s.pickupStop) pickupEvents.push({ stopId: s.pickupStop, done: true, vid: s.id, dropoffStop });
+          if (!s.pickupStop && s.paxCount > 0) pickupEvents.push({ loopDone: true, vid: s.id, dropoffStop });
           // park at start of the loop's first segment to avoid teleport on restart
           const loopPark = v.route.length >= 2 ? lanePos(v.route[0], v.route[1], 0, sp) : null;
           const base = { ...s, ri:0, prog:0, park:loopPark, customRoute:null, pickupStop:null, paxCount:0, obstacleTimer, obstacleType };
@@ -464,11 +468,12 @@ export default function App() {
             const cap = v.capacity || 2;
             const waitingHere = paxR.current.filter(x => x.stopId === toId && x.status === "waiting");
             const alreadyClaimed = claimedCounts[toId] || 0;
-            dispatchPickupCount = Math.min(waitingHere.length - alreadyClaimed, cap - s.paxCount);
-            if (dispatchPickupCount > 0) claimedCounts[toId] = alreadyClaimed + dispatchPickupCount;
-            if (dispatchPickupCount <= 0) dispatchPickupCount = 0;
-            pickupEvents.push({ stopId: s.pickupStop, done: false, count: dispatchPickupCount, vid: s.id });
-            newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で${dispatchPickupCount}人乗車`);
+            dispatchPickupCount = Math.max(0, Math.min(waitingHere.length - alreadyClaimed, cap - s.paxCount));
+            if (dispatchPickupCount > 0) {
+              claimedCounts[toId] = alreadyClaimed + dispatchPickupCount;
+              pickupEvents.push({ stopId: s.pickupStop, done: false, count: dispatchPickupCount, vid: s.id });
+              newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で${dispatchPickupCount}人乗車`);
+            }
           } else if (loopPickupCount > 0) {
             newLogs.push(`🚌 ${v.name} ${stopsMapR.current[toId]?.name ?? toId}で${loopPickupCount}人乗車`);
           } else {
@@ -516,7 +521,16 @@ export default function App() {
                 return x;
               });
             } else if (e.loopDone) {
-              p = p.map(x => x.status === "boarding" && x.vid === e.vid ? { ...x, status: "done" } : x);
+              // 降車 → 終点で waiting に再スポーン（上限15人超の場合は退場）
+              const active = p.filter(x => x.status !== "done").length;
+              p = p.map(x => {
+                if (x.status === "boarding" && x.vid === e.vid) {
+                  return active < 15
+                    ? { ...x, status: "waiting", stopId: e.dropoffStop, vid: null, spawnT: Date.now() }
+                    : { ...x, status: "done" };
+                }
+                return x;
+              });
             } else if (!e.done) {
               let cnt = e.count || 1;
               p = p.map(x => {
@@ -531,8 +545,16 @@ export default function App() {
                 return x;
               });
             } else {
-              // Only mark done passengers that belong to THIS vehicle (vid check prevents cross-vehicle errors)
-              p = p.map(x => x.stopId===e.stopId && x.status==="boarding" && x.vid===e.vid ? {...x,status:"done"} : x);
+              // 配車完了 → 降車して dropoffStop で再スポーン（上限15人超の場合は退場）
+              const active = p.filter(x => x.status !== "done").length;
+              p = p.map(x => {
+                if (x.status === "boarding" && x.vid === e.vid) {
+                  return active < 15
+                    ? { ...x, status: "waiting", stopId: e.dropoffStop, vid: null, spawnT: Date.now() }
+                    : { ...x, status: "done" };
+                }
+                return x;
+              });
             }
           });
           return p;
@@ -676,17 +698,27 @@ export default function App() {
   const save = () => {
     const newAdj = adjFromEdges(localEdges);
     const nv = buildVehicles(localDefs, newAdj);
-    setDefs(localDefs);
+    // 経路が到達不能（route.length < 2）の車両は自動的に非稼働にする
+    const brokenIds = new Set(nv.filter(v => v.route.length < 2).map(v => v.id));
+    const safeDefs = brokenIds.size > 0
+      ? localDefs.map(d => brokenIds.has(d.id) ? { ...d, active: false } : d)
+      : localDefs;
+    const safeNv = brokenIds.size > 0 ? buildVehicles(safeDefs, newAdj) : nv;
+    setDefs(safeDefs);
     setStopDefs(localStopDefs);
     setEdges(localEdges);
     setStopPos(localStopPos);
-    localStorage.setItem("iino_defs",     JSON.stringify(localDefs));
+    localStorage.setItem("iino_defs",     JSON.stringify(safeDefs));
     localStorage.setItem("iino_stopPos",  JSON.stringify(localStopPos));
     localStorage.setItem("iino_stopDefs", JSON.stringify(localStopDefs));
     localStorage.setItem("iino_edges",    JSON.stringify(localEdges));
+    if (brokenIds.size > 0) {
+      const names = nv.filter(v => brokenIds.has(v.id)).map(v => v.name).join(", ");
+      setLogs(p => [{ t:Date.now(), m:`⚠️ 経路不正のため停止: ${names}` }, ...p].slice(0, 80));
+    }
     setVs(prev => {
       const byId = Object.fromEntries(prev.map(s => [s.id, s]));
-      return nv.map((v, i) => {
+      return safeNv.map((v, i) => {
         const startPos = v.route.length >= 2
           ? lanePos(v.route[0], v.route[1], 0, localStopPos)
           : { x: localStopPos[v.route[0]]?.x ?? 100, y: localStopPos[v.route[0]]?.y ?? 100 };
@@ -799,15 +831,20 @@ export default function App() {
                 <DirectedLane key={`ln-${e.from}-${e.to}`} fromId={e.from} toId={e.to} sp={stopPos}/>
               ))}
 
-              {/* Waiting passenger icons */}
-              {waitingPax.map((p, i) => {
-                const sp2 = stopPos[p.stopId];
-                if (!sp2) return null;
-                return <text key={p.id}
-                  x={sp2.x - 8 + (i%4)*10} y={sp2.y - 22 - Math.floor(i/4)*12}
-                  fontSize={11} textAnchor="middle"
-                  style={{ userSelect:"none", pointerEvents:"none" }}>🧍</text>;
-              })}
+              {/* Waiting passenger icons — index is per-stop so icons stack correctly per stop */}
+              {(() => {
+                const countByStop = {};
+                return waitingPax.map(p => {
+                  const sp2 = stopPos[p.stopId];
+                  if (!sp2) return null;
+                  const idx = countByStop[p.stopId] ?? 0;
+                  countByStop[p.stopId] = idx + 1;
+                  return <text key={p.id}
+                    x={sp2.x - 8 + (idx % 4) * 10} y={sp2.y - 22 - Math.floor(idx / 4) * 12}
+                    fontSize={11} textAnchor="middle"
+                    style={{ userSelect:"none", pointerEvents:"none" }}>🧍</text>;
+                });
+              })()}
 
               {/* Stop nodes */}
               {stopDefs.map(s => (
