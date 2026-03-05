@@ -304,7 +304,8 @@ export default function App() {
   const pedR      = useRef(pedDensity);  pedR.current     = pedDensity;
   const maxStopR  = useRef(maxStop);     maxStopR.current = maxStop;
   const autoDisR  = useRef(autoDis);     autoDisR.current = autoDis;
-  const paxTimerR = useRef(Math.random() * 8 + 6);
+  const paxTimerR  = useRef(Math.random() * 8 + 6);
+  const waitStatsR = useRef({ sum: 0, count: 0 });
 
   // ── Animation loop ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -325,18 +326,22 @@ export default function App() {
         const stopIds = Object.keys(posR.current);
         if (!stopIds.length) { paxTimerR.current = 5; return; }
         const spawnStop = stopIds[Math.floor(Math.random() * stopIds.length)];
-        newPax = { id: paxIdCounter++, stopId: spawnStop, status: "waiting" };
+        newPax = { id: paxIdCounter++, stopId: spawnStop, status: "waiting", spawnT: Date.now() };
         newLogs.push(`🧍 ${stopsMapR.current[spawnStop]?.name || spawnStop}に乗客が発生`);
 
         if (autoDisR.current) {
-          const tPos = sp[spawnStop];
-          let best = null, bestDist = Infinity;
+          let best = null, bestScore = Infinity;
           for (const s of vsR.current) {
             const v = vrRef.current.find(x => x.id === s.id);
             if (!v || !v.active || s.pickupStop) continue;
             if (s.paxCount >= (v.capacity || 2)) continue; // at capacity
-            const d = Math.hypot(s.pos.x - tPos.x, s.pos.y - tPos.y);
-            if (d < bestDist) { bestDist = d; best = s; }
+            const route = s.customRoute || v.route;
+            const nri = Math.min(s.ri + 1, route.length - 1);
+            const nextStop = route[nri];
+            const pathLen = shortestPath(nextStop, spawnStop, adjR.current)?.length ?? 999;
+            // score = (remaining current seg + hops to pickup) / speed → lower is faster
+            const score = ((1 - s.prog) + Math.max(0, pathLen - 1)) / (v.speed || 1);
+            if (score < bestScore) { bestScore = score; best = s; }
           }
           if (best) {
             dispatchVid = best.id;
@@ -360,6 +365,7 @@ export default function App() {
       });
 
       const pickupEvents = [];
+      const claimedCounts = {}; // stopId → passengers claimed this frame (prevents double-boarding)
 
       const nextVs = prevVs.map(s => {
         const v = vrRef.current.find(x => x.id === s.id);
@@ -368,18 +374,31 @@ export default function App() {
 
         // Apply dispatch
         if (dispatchVid === s.id && newPax) {
-          const curStop = route[Math.min(s.ri, route.length-1)];
-          const toPickup = shortestPath(curStop, newPax.stopId, adjR.current) || [curStop, newPax.stopId];
-          const toEnd = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [newPax.stopId];
-          const fullRoute = [...toPickup, ...toEnd.slice(1)];
+          const nriD = s.ri + 1;
+          let fullRoute, newProg;
+          if (s.prog > 0 && nriD < route.length) {
+            // Mid-segment: preserve current segment as fullRoute[0→1] so position doesn't jump
+            const curFromStop = route[s.ri];
+            const curToStop   = route[nriD];
+            const toPickup = shortestPath(curToStop, newPax.stopId, adjR.current) || [curToStop, newPax.stopId];
+            const toEnd    = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [newPax.stopId];
+            fullRoute = [curFromStop, ...toPickup, ...toEnd.slice(1)];
+            newProg = s.prog; // no visual jump: lanePos(fullRoute[0], fullRoute[1], newProg) = current pos
+          } else {
+            const curStop  = route[s.ri];
+            const toPickup = shortestPath(curStop, newPax.stopId, adjR.current) || [curStop, newPax.stopId];
+            const toEnd    = shortestPath(newPax.stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [newPax.stopId];
+            fullRoute = [...toPickup, ...toEnd.slice(1)];
+            newProg = 0;
+          }
           if (fullRoute.length < 2) {
-            // Vehicle already at pickup stop (and it's the route endpoint) → instant boarding
+            // Vehicle already at pickup stop → instant boarding
             pickupEvents.push({ stopId: newPax.stopId, done: false, vid: s.id });
             pickupEvents.push({ stopId: newPax.stopId, done: true,  vid: s.id });
             newLogs.push(`🧍→🚗 ${stopsMapR.current[newPax.stopId]?.name || newPax.stopId}で即時乗車`);
             return { ...s, paxCount: s.paxCount + 1 };
           }
-          return { ...s, customRoute: fullRoute, pickupStop: newPax.stopId, ri: 0, prog: 0 };
+          return { ...s, customRoute: fullRoute, pickupStop: newPax.stopId, ri: 0, prog: newProg };
         }
 
         if (route.length < 2) return s;
@@ -432,8 +451,10 @@ export default function App() {
           if (!s.pickupStop) {
             const cap = v.capacity || 2;
             const waitingHere = paxR.current.filter(x => x.stopId === toId && x.status === "waiting");
-            loopPickupCount = Math.min(waitingHere.length, cap - s.paxCount);
+            const alreadyClaimed = claimedCounts[toId] || 0;
+            loopPickupCount = Math.min(waitingHere.length - alreadyClaimed, cap - s.paxCount);
             if (loopPickupCount > 0) {
+              claimedCounts[toId] = alreadyClaimed + loopPickupCount;
               pickupEvents.push({ stopId: toId, loopPickup: true, count: loopPickupCount, vid: s.id });
             }
           }
@@ -442,7 +463,10 @@ export default function App() {
           if (s.pickupStop && toId === s.pickupStop) {
             const cap = v.capacity || 2;
             const waitingHere = paxR.current.filter(x => x.stopId === toId && x.status === "waiting");
-            dispatchPickupCount = Math.max(1, Math.min(waitingHere.length, cap - s.paxCount));
+            const alreadyClaimed = claimedCounts[toId] || 0;
+            dispatchPickupCount = Math.min(waitingHere.length - alreadyClaimed, cap - s.paxCount);
+            if (dispatchPickupCount > 0) claimedCounts[toId] = alreadyClaimed + dispatchPickupCount;
+            if (dispatchPickupCount <= 0) dispatchPickupCount = 0;
             pickupEvents.push({ stopId: s.pickupStop, done: false, count: dispatchPickupCount, vid: s.id });
             newLogs.push(`🧍→🚗 ${stopsMapR.current[toId]?.name || toId}で${dispatchPickupCount}人乗車`);
           } else if (loopPickupCount > 0) {
@@ -481,7 +505,12 @@ export default function App() {
             if (e.loopPickup) {
               let cnt = e.count;
               p = p.map(x => {
-                if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) { cnt--; return { ...x, status: "boarding", vid: e.vid }; }
+                if (x.stopId === e.stopId && x.status === "waiting" && cnt > 0) {
+                  cnt--;
+                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
+                  waitStatsR.current.count += 1;
+                  return { ...x, status: "boarding", vid: e.vid };
+                }
                 return x;
               });
             } else if (e.loopDone) {
@@ -489,11 +518,17 @@ export default function App() {
             } else if (!e.done) {
               let cnt = e.count || 1;
               p = p.map(x => {
-                if (x.stopId===e.stopId && x.status==="waiting" && cnt > 0) { cnt--; return {...x,status:"boarding",vid:e.vid}; }
+                if (x.stopId===e.stopId && x.status==="waiting" && x.vid==null && cnt > 0) {
+                  cnt--;
+                  waitStatsR.current.sum   += Date.now() - (x.spawnT || Date.now());
+                  waitStatsR.current.count += 1;
+                  return {...x, status:"boarding", vid:e.vid};
+                }
                 return x;
               });
             } else {
-              p = p.map(x => x.stopId===e.stopId&&x.status==="boarding" ? {...x,status:"done"} : x);
+              // Only mark done passengers that belong to THIS vehicle (vid check prevents cross-vehicle errors)
+              p = p.map(x => x.stopId===e.stopId && x.status==="boarding" && x.vid===e.vid ? {...x,status:"done"} : x);
             }
           });
           return p;
@@ -619,11 +654,25 @@ export default function App() {
     const v = vehicles.find(x => x.id === vid);
     if (!s || !v) return;
     const route = s.customRoute || v.route;
-    const curStop = route[Math.min(s.ri, route.length-1)];
-    const toPickup = shortestPath(curStop, stopId, adjR.current) || [curStop, stopId];
-    const toEnd = shortestPath(stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [stopId];
+    const nriD = s.ri + 1;
+    let fullRoute, newProg;
+    if (s.prog > 0 && nriD < route.length) {
+      // Mid-segment: keep current segment at [0→1] to avoid position jump
+      const curFromStop = route[s.ri];
+      const curToStop   = route[nriD];
+      const toPickup = shortestPath(curToStop, stopId, adjR.current) || [curToStop, stopId];
+      const toEnd    = shortestPath(stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [stopId];
+      fullRoute = [curFromStop, ...toPickup, ...toEnd.slice(1)];
+      newProg = s.prog;
+    } else {
+      const curStop  = route[s.ri];
+      const toPickup = shortestPath(curStop, stopId, adjR.current) || [curStop, stopId];
+      const toEnd    = shortestPath(stopId, v.waypoints[v.waypoints.length-1], adjR.current) || [stopId];
+      fullRoute = [...toPickup, ...toEnd.slice(1)];
+      newProg = 0;
+    }
     setVs(prev => prev.map(x => x.id===vid
-      ? { ...x, customRoute:[...toPickup,...toEnd.slice(1)], pickupStop:stopId, ri:0, prog:0 }
+      ? { ...x, customRoute: fullRoute, pickupStop: stopId, ri: 0, prog: newProg }
       : x
     ));
     setLogs(p => [{ t:Date.now(), m:`📡 ${v.name}を${stopsMap[stopId]?.name||stopId}へ手動配車` }, ...p].slice(0,80));
@@ -823,6 +872,17 @@ export default function App() {
               <div style={{ fontSize:10, marginBottom:6 }}>
                 <span style={{ color:"#fbbf24" }}>待機: {waitingPax.length}人</span>
                 {boardingPax.length > 0 && <span style={{ color:"#4ade80", marginLeft:8 }}>乗車中: {boardingPax.length}人</span>}
+                <div style={{ color:"#94a3b8", marginTop:2 }}>
+                  平均待機:{" "}
+                  {waitStatsR.current.count > 0
+                    ? `${(waitStatsR.current.sum / waitStatsR.current.count / 1000).toFixed(0)}秒`
+                    : "—"}
+                  {waitStatsR.current.count > 0 && (
+                    <span style={{ color:"#475569", fontSize:9, marginLeft:4 }}>
+                      (n={waitStatsR.current.count})
+                    </span>
+                  )}
+                </div>
               </div>
               <div style={{ fontSize:9, color:"#475569", marginBottom:4 }}>手動で乗客発生:</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
