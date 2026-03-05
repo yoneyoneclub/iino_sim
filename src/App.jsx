@@ -698,17 +698,27 @@ export default function App() {
   const save = () => {
     const newAdj = adjFromEdges(localEdges);
     const nv = buildVehicles(localDefs, newAdj);
-    setDefs(localDefs);
+    // 経路が到達不能（route.length < 2）の車両は自動的に非稼働にする
+    const brokenIds = new Set(nv.filter(v => v.route.length < 2).map(v => v.id));
+    const safeDefs = brokenIds.size > 0
+      ? localDefs.map(d => brokenIds.has(d.id) ? { ...d, active: false } : d)
+      : localDefs;
+    const safeNv = brokenIds.size > 0 ? buildVehicles(safeDefs, newAdj) : nv;
+    setDefs(safeDefs);
     setStopDefs(localStopDefs);
     setEdges(localEdges);
     setStopPos(localStopPos);
-    localStorage.setItem("iino_defs",     JSON.stringify(localDefs));
+    localStorage.setItem("iino_defs",     JSON.stringify(safeDefs));
     localStorage.setItem("iino_stopPos",  JSON.stringify(localStopPos));
     localStorage.setItem("iino_stopDefs", JSON.stringify(localStopDefs));
     localStorage.setItem("iino_edges",    JSON.stringify(localEdges));
+    if (brokenIds.size > 0) {
+      const names = nv.filter(v => brokenIds.has(v.id)).map(v => v.name).join(", ");
+      setLogs(p => [{ t:Date.now(), m:`⚠️ 経路不正のため停止: ${names}` }, ...p].slice(0, 80));
+    }
     setVs(prev => {
       const byId = Object.fromEntries(prev.map(s => [s.id, s]));
-      return nv.map((v, i) => {
+      return safeNv.map((v, i) => {
         const startPos = v.route.length >= 2
           ? lanePos(v.route[0], v.route[1], 0, localStopPos)
           : { x: localStopPos[v.route[0]]?.x ?? 100, y: localStopPos[v.route[0]]?.y ?? 100 };
